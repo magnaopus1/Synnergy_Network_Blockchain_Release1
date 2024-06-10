@@ -371,4 +371,4 @@ Description: Represents agricultural assets, produce, or farming rights on the b
 
 SYN5000 Token Standard (Gambling Tokens)
 
-Description: Represents digital assets used for gambling, betting, or gaming activities on decentralized platforms or online casinos. These tokens enable users to participate in various games of chance, sports betting, or prediction markets, providing transparency, fairness, and security in gambling transactions.
+Description: Represents digital assets used for gambling, betting, or gaming activities on decentralized platforms or online casinos. These tokens enable users to participate in various games of chance, sports betting, or prediction markets, providing transparency, fairness, and security in gambling transactions.# synnergy-network1
