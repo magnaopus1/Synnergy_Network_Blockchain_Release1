@@ -1,0 +1,157 @@
+# Indexing Node Configuration File
+
+# [Node]
+# General node settings
+[node]
+# The unique ID for the node
+id = "indexing-node-1"
+
+# The IP address or hostname of the node
+host = "0.0.0.0"
+
+# The port on which the node will run
+port = 8080
+
+# Directory to store data
+data_dir = "/data/indexing_node"
+
+# Log directory
+log_dir = "/logs/indexing_node"
+
+# Enable or disable logging
+logging = true
+
+# Log level: debug, info, warn, error
+log_level = "info"
+
+# [Database]
+# Database settings for indexing
+[database]
+# Path to the database directory
+path = "/data/indexing_node/db"
+
+# Maximum memory usage for the database
+max_memory = "128GB"
+
+# Enable query optimization
+query_optimization = true
+
+# [Network]
+# Network settings for the node
+[network]
+# Bandwidth limit in MB
+bandwidth_limit = 1000
+
+# Network interface to use
+interface = "eth0"
+
+# [Security]
+# Security settings for the node
+[security]
+# Enable or disable encryption
+encryption_enabled = true
+
+# Encryption algorithm to use: scrypt, aes, argon2
+encryption_algorithm = "argon2"
+
+# Salt for encryption
+encryption_salt = "random_generated_salt"
+
+# Enable or disable secure connections (TLS/SSL)
+secure_connections = true
+
+# Path to the TLS certificate file
+tls_cert_file = "/path/to/tls/cert.pem"
+
+# Path to the TLS key file
+tls_key_file = "/path/to/tls/key.pem"
+
+# [Performance]
+# Performance tuning settings
+[performance]
+# Number of CPU cores to use
+cpu_cores = 8
+
+# Amount of RAM to allocate
+ram_allocation = "128GB"
+
+# High-speed storage configuration
+storage = "SSD"
+
+# Enable dynamic resource allocation
+dynamic_resource_allocation = true
+
+# [Maintenance]
+# Maintenance settings
+[maintenance]
+# Enable automatic backups
+automatic_backups = true
+
+# Backup interval in hours
+backup_interval = 24
+
+# Path to store backups
+backup_path = "/data/indexing_node/backups"
+
+# Enable regular updates and maintenance
+regular_updates = true
+
+# Update check interval in hours
+update_interval = 48
+
+# [Monitoring]
+# Monitoring and health check settings
+[monitoring]
+# Enable real-time monitoring
+real_time_monitoring = true
+
+# Monitoring interval in seconds
+monitoring_interval = 30
+
+# Health check endpoint
+health_check_endpoint = "http://localhost:8080/health"
+
+# [API]
+# API settings for external interactions
+[api]
+# Enable or disable the API
+api_enabled = true
+
+# API host
+api_host = "0.0.0.0"
+
+# API port
+api_port = 8081
+
+# API key for secure access
+api_key = "secure_api_key_here"
+
+# [Logging]
+# Detailed logging configuration
+[logging]
+# Log file path
+log_file = "/logs/indexing_node/indexing_node.log"
+
+# Log rotation settings
+log_rotation = true
+
+# Max size of a log file in MB
+log_max_size = 100
+
+# Max number of log files to retain
+log_max_backups = 10
+
+# Max age of a log file in days
+log_max_age = 30
+
+# [Integration]
+# Integration with other network components
+[integration]
+# URL of the main blockchain node to sync with
+main_node_url = "http://mainnode.synthron.network:8080"
+
+# Sync interval in seconds
+sync_interval = 60
+
+# Enable or disable blockchain sync
+sync_enabled = true

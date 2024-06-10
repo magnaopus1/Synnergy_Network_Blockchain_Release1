@@ -1,0 +1,85 @@
+# Master Node Configuration File
+
+# General Configuration
+[node]
+node_name = "MasterNode01"                  # Name of the node
+node_type = "master"                        # Type of the node
+network_id = 1                              # Network identifier for the Synthron blockchain
+
+# Collateral Configuration
+[collateral]
+amount = 10000                              # Required collateral in Synthron tokens
+wallet_address = "YOUR_WALLET_ADDRESS"      # Wallet address for collateral
+
+# Network Configuration
+[network]
+listen_address = "0.0.0.0:30303"            # Address and port for P2P connections
+external_address = "YOUR_EXTERNAL_IP:30303" # External IP address and port
+max_peers = 50                              # Maximum number of peers
+
+# RPC Configuration
+[rpc]
+rpc_address = "0.0.0.0:8545"                # Address and port for RPC connections
+rpc_corsdomain = "*"                        # Allowed CORS domains
+rpc_vhosts = "*"                            # Allowed virtual hosts
+rpc_api = ["web3", "eth", "net", "admin"]   # Enabled RPC APIs
+
+# Database Configuration
+[database]
+path = "./data"                             # Path to the database directory
+cache_size = 2048                           # Cache size in MB
+
+# Logging Configuration
+[logging]
+log_path = "./logs"                         # Path to the logs directory
+log_level = "info"                          # Logging level (trace, debug, info, warn, error, fatal)
+log_rotation_size = 100                     # Log rotation size in MB
+log_rotation_age = 7                        # Log rotation age in days
+
+# Security Configuration
+[security]
+encryption_algorithm = "aes-256-gcm"        # Encryption algorithm for data at rest
+private_key_path = "./config/keys"          # Path to the private keys
+tls_cert_path = "./config/tls/cert.pem"     # Path to the TLS certificate
+tls_key_path = "./config/tls/key.pem"       # Path to the TLS key
+
+# Consensus Configuration
+[consensus]
+consensus_algorithm = "PoW"                 # Consensus algorithm (PoW, PoS, DPoS)
+mining_algorithm = "argon2"                 # Mining algorithm for PoW (argon2, scrypt)
+block_time = 15                             # Target block time in seconds
+difficulty_adjustment_interval = 2016       # Number of blocks between difficulty adjustments
+
+# Governance Configuration
+[governance]
+voting_power = 1.0                          # Voting power of the Master Node
+proposals_quorum = 50                       # Quorum for proposals in percentage
+proposal_duration = 604800                  # Proposal duration in seconds (1 week)
+governance_reward = 0.1                     # Governance reward percentage
+
+# Monitoring and Health Check Configuration
+[monitoring]
+health_check_interval = 60                  # Health check interval in seconds
+metrics_enabled = true                      # Enable or disable metrics collection
+metrics_address = "0.0.0.0:9100"            # Address and port for metrics server
+
+# Backup and Recovery Configuration
+[backup]
+backup_interval = 86400                     # Backup interval in seconds (1 day)
+backup_path = "./backup"                    # Path to the backup directory
+backup_retention = 7                        # Backup retention period in days
+
+# Advanced Configuration
+[advanced]
+max_pending_transactions = 1024             # Maximum number of pending transactions
+max_block_size = 1048576                    # Maximum block size in bytes (1 MB)
+sync_mode = "full"                          # Synchronization mode (full, fast, light)
+max_gas_limit = 8000000                     # Maximum gas limit per block
+min_gas_price = 1000000000                  # Minimum gas price in wei
+
+# API Keys (if applicable)
+[api_keys]
+etherscan_api_key = "YOUR_ETHERSCAN_API_KEY" # API key for Etherscan integration
+infura_project_id = "YOUR_INFURA_PROJECT_ID" # Project ID for Infura integration
+
+# End of Configuration

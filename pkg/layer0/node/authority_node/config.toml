@@ -1,0 +1,96 @@
+# Synthron Authority Node Configuration File
+
+[Node]
+# General node settings
+node_name = "Synthron_Authority_Node_1"
+node_type = "authority"
+network_id = "synthron_mainnet"
+data_dir = "/root/.synthron/data"
+log_dir = "/root/.synthron/logs"
+log_level = "info"
+
+[Consensus]
+# Consensus algorithm settings
+algorithm = "dpos" # Delegated Proof of Stake
+block_creation_interval = "5s"
+max_block_size = "2MB"
+max_transaction_per_block = 1000
+
+[Blockchain]
+# Blockchain settings
+genesis_file = "/root/.synthron/config/genesis.json"
+chain_id = "synthron-1"
+sync_mode = "full" # Options: full, fast, light
+
+[Network]
+# Networking settings
+p2p_port = 30303
+rpc_http_port = 8545
+rpc_ws_port = 8546
+rpc_api = ["web3", "eth", "net", "admin", "debug"]
+max_peers = 50
+discovery = true
+
+[Security]
+# Security settings
+enable_tls = true
+tls_cert_file = "/root/.synthron/config/tls.crt"
+tls_key_file = "/root/.synthron/config/tls.key"
+enable_firewall = true
+firewall_rules = "/root/.synthron/config/firewall_rules.json"
+enable_ddos_protection = true
+
+[Database]
+# Database settings
+db_path = "/root/.synthron/data/blockchain"
+db_backend = "leveldb" # Options: leveldb, rocksdb
+cache_size = "1024MB"
+
+[Monitoring]
+# Monitoring and metrics settings
+enable_metrics = true
+metrics_port = 6060
+metrics_host = "0.0.0.0"
+metrics_prefix = "synthron"
+
+[Backup]
+# Backup settings
+enable_backup = true
+backup_interval = "24h"
+backup_dir = "/root/.synthron/backups"
+backup_retention = "7d"
+
+[Governance]
+# Governance settings
+voting_power = 10000
+vote_threshold = "67%"
+proposal_expiry = "72h"
+
+[Performance]
+# Performance tuning settings
+num_cores = 16
+memory_limit = "64GB"
+network_bandwidth = "1Gbps"
+
+[Advanced]
+# Advanced settings
+experimental_features = true
+max_pending_transactions = 5000
+min_gas_price = "1000000000" # 1 Gwei
+
+[Logging]
+# Logging settings
+log_to_file = true
+log_file_path = "/root/.synthron/logs/node.log"
+log_file_max_size = "100MB"
+log_file_max_backups = 10
+log_file_max_age = 30
+
+[API]
+# API settings
+enable_http = true
+http_host = "0.0.0.0"
+http_cors = "*"
+http_timeout = "120s"
+
+# Add any additional configuration parameters as needed

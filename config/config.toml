@@ -1,0 +1,23 @@
+# Blockchain Configuration
+[Blockchain]
+data_dir = "data/"       # Directory to store blockchain data
+genesis_block_file = "data/genesis.json"  # Genesis block file
+
+# Network Configuration
+[Network]
+listen_address = "127.0.0.1:8080"  # Listen address for incoming connections
+max_peers = 10  # Maximum number of peer connections
+bootstrap_nodes = ["127.0.0.1:8081", "127.0.0.1:8082"]  # List of bootstrap nodes
+
+# Consensus Configuration
+[Consensus]
+algorithm = "PoW"  # Consensus algorithm (e.g., PoW, PoS)
+
+# Wallet Configuration
+[Wallet]
+keystore_dir = "keystore/"  # Directory to store wallet key pairs
+
+# Logging Configuration
+[Logging]
+log_level = "info"  # Logging level (e.g., debug, info, error)
+log_file = "logs/my-blockchain.log"  # Log file path

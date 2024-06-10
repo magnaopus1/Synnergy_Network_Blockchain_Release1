@@ -1,0 +1,115 @@
+# Synthron Blockchain - Staking Node Configuration
+# This file contains the configuration settings for running a Staking Node in the Synthron blockchain.
+# Please ensure all settings are correctly configured before starting the node.
+
+# [General Settings]
+[node]
+# Unique identifier for the staking node
+node_id = "your-node-id-here"
+
+# Node name
+node_name = "your-node-name-here"
+
+# Node description
+node_description = "A brief description of your staking node"
+
+# [Network Settings]
+[network]
+# The IP address or hostname for the node
+host = "0.0.0.0"
+
+# The port on which the node will run
+port = 8080
+
+# [Staking Settings]
+[staking]
+# The amount of Synthron tokens staked for this node
+stake_amount = 100000
+
+# The wallet address from which the stake is locked
+stake_wallet_address = "your-stake-wallet-address-here"
+
+# The frequency (in minutes) at which the node will check and distribute rewards
+reward_distribution_frequency = 60
+
+# [Hardware Requirements]
+[hardware]
+# CPU settings
+cpu_cores = 8
+cpu_threads = 16
+
+# Memory settings
+memory_gb = 32
+
+# Storage settings
+storage_gb = 1024
+
+# [Security Settings]
+[security]
+# Enable end-to-end encryption for node communication
+encryption_enabled = true
+
+# Path to the SSL certificate file
+ssl_cert_file = "/path/to/your/ssl/certificate.crt"
+
+# Path to the SSL key file
+ssl_key_file = "/path/to/your/ssl/private.key"
+
+# [Logging Settings]
+[logging]
+# Directory to store log files
+log_directory = "/var/log/synthron/staking_node"
+
+# Log level (options: "DEBUG", "INFO", "WARN", "ERROR")
+log_level = "INFO"
+
+# [Update Settings]
+[updates]
+# Enable automatic updates for the staking node software
+auto_update_enabled = true
+
+# URL for the update server
+update_server_url = "https://update-server.synthron.org"
+
+# [Monitoring Settings]
+[monitoring]
+# Enable real-time monitoring
+monitoring_enabled = true
+
+# Monitoring endpoint
+monitoring_endpoint = "http://monitoring.synthron.org/endpoint"
+
+# [Backup Settings]
+[backup]
+# Enable automated backups
+backup_enabled = true
+
+# Directory to store backup files
+backup_directory = "/var/backups/synthron/staking_node"
+
+# Backup frequency (in hours)
+backup_frequency = 24
+
+# [Compliance Settings]
+[compliance]
+# Enable compliance checks
+compliance_enabled = true
+
+# Compliance check frequency (in days)
+compliance_check_frequency = 30
+
+# [Notification Settings]
+[notifications]
+# Enable notifications for important events
+notifications_enabled = true
+
+# Email address to send notifications to
+notification_email = "your-email@example.com"
+
+# [Advanced Settings]
+[advanced]
+# Custom blockchain client settings
+blockchain_client_custom_settings = "custom-settings-here"
+
+# Developer mode (true/false)
+developer_mode = false
