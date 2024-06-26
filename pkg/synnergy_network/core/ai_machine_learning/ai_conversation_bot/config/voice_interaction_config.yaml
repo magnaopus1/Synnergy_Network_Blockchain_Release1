@@ -1,0 +1,8 @@
+logging:
+  log_file: "/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/voice_interaction.log"
+  log_level: INFO
+
+tts:
+  rate: 150
+  volume: 1.0
+  voice_id: 0  # Use 0 for default voice. Change as per available voices.

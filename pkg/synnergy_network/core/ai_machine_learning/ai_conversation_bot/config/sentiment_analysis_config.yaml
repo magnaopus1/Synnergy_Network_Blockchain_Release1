@@ -1,0 +1,13 @@
+model:
+  vocab_size: 20000
+  embedding_dim: 128
+  lstm_units: 64
+  dropout_rate: 0.5
+
+training:
+  batch_size: 32
+  epochs: 15
+
+logging:
+  log_file: "/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/sentiment_analysis.log"
+  log_level: INFO

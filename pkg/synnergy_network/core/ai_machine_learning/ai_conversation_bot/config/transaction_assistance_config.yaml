@@ -1,0 +1,8 @@
+api_endpoints:
+  transaction_status: "https://api.blockchainnetwork.com/transaction/status/{transaction_id}"
+  initiate_transaction: "https://api.blockchainnetwork.com/transaction/initiate"
+  wallet_balance: "https://api.blockchainnetwork.com/wallet/balance/{address}"
+
+logging:
+  log_file: "/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/transaction_assistance.log"
+  log_level: INFO

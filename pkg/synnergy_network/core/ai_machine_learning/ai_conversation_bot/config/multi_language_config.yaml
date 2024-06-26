@@ -1,0 +1,12 @@
+default_language: en
+supported_languages:
+  - en
+  - es
+  - fr
+  - de
+  - zh-cn
+  - ja
+  - ru
+  - ar
+  - pt
+  - hi

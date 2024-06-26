@@ -1,0 +1,2 @@
+feedback_collection_interval: 30  # in days
+feedback_storage_path: "/feedback/"

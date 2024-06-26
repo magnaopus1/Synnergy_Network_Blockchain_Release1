@@ -1,0 +1,29 @@
+auto_scaling:
+  namespace: "default"
+  deployment_name: "ai-conversation-bot"
+  min_replicas: 2
+  max_replicas: 20
+  target_cpu_utilization: 75
+
+resource_limits:
+  namespace: "default"
+  deployment_name: "ai-conversation-bot"
+  limits:
+    cpu: "2000m"
+    memory: "4Gi"
+  requests:
+    cpu: "1000m"
+    memory: "2Gi"
+
+scaling_monitoring:
+  monitoring_interval: 60
+  deployments:
+    - namespace: "default"
+      deployment_name: "ai-conversation-bot"
+      target_metrics:
+        cpu_utilization: 75
+        memory_utilization: 75
+
+logging:
+  log_file: "/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/scalability_settings.log"
+  log_level: INFO

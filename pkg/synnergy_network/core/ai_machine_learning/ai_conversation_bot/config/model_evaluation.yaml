@@ -1,0 +1,19 @@
+data:
+  test_data_path: '/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/data/test_data.csv'
+  label_names: ['Class1', 'Class2']
+
+model:
+  max_len: 128
+  vocab_size: 30522
+  embed_size: 256
+  num_heads: 8
+  hidden_dim: 2048
+  num_layers: 6
+  num_classes: 2
+  dropout: 0.1
+
+evaluation:
+  batch_size: 32
+  model_path: '/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/models/best_model.pth'
+  confusion_matrix_path: '/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/evaluation/confusion_matrix.png'
+  classification_report_path: '/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/evaluation/classification_report.txt'

@@ -1,0 +1,21 @@
+context_management:
+  session_timeout: 300  # Time in seconds before a session times out
+  max_context_length: 1024  # Maximum number of tokens to keep in context
+  context_storage_type: redis  # Type of storage for context management
+  redis:
+    host: localhost
+    port: 6379
+    db: 0
+  context_update_frequency: 1  # Frequency of context updates in seconds
+  context_cleanup_interval: 3600  # Interval for cleaning up expired context in seconds
+  multi_session_handling: true  # Enable handling of multiple sessions per user
+  max_sessions_per_user: 5  # Maximum number of sessions to store per user
+  context_encryption: true  # Enable encryption for context data
+  encryption_algorithm: AES-256  # Encryption algorithm to use for context data
+  context_persistence:
+    persistence_type: disk  # Type of persistence storage (e.g., disk, memory)
+    disk_storage_path: /Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/context_storage  # Path to store context data if using disk persistence
+  context_logging:
+    enable_logging: true  # Enable logging for context management
+    log_path: /Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/context_management.log  # Path to the log file
+    log_level: INFO  # Log level (DEBUG, INFO, WARN, ERROR)

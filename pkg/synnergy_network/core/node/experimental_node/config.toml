@@ -1,0 +1,38 @@
+# Use an official Go runtime as a parent image
+FROM golang:1.20-alpine
+
+# Set the Current Working Directory inside the container
+WORKDIR /app
+
+# Copy go mod and sum files
+COPY go.mod go.sum ./
+
+# Install dependencies
+RUN go mod download
+
+# Copy the source from the current directory to the Working Directory inside the container
+COPY . .
+
+# Build the Go app
+RUN go build -o experimental_node ./node.go
+
+# Set environment variables
+ENV NODE_ID=experimental-node-1
+ENV TEST_MODE=true
+ENV CONSENSUS_ALGORITHM=argon2
+ENV NETWORK_ID=testnet
+ENV LOG_LEVEL=DEBUG
+ENV STORAGE_PATH=/data/blockchain
+
+# Expose port 8080 to the outside world
+EXPOSE 8080
+
+# Create data and logs directories
+RUN mkdir -p /data /logs
+
+# Mount /data and /logs as volumes
+VOLUME /data
+VOLUME /logs
+
+# Run the executable
+CMD ["./experimental_node", "--config=config.toml"]

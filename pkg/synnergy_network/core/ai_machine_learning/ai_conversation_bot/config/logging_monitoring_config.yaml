@@ -1,0 +1,85 @@
+logging_monitoring:
+  logging:
+    enable_logging: true
+    log_level: DEBUG
+    log_format: "[%(asctime)s] %(levelname)s: %(message)s"
+    log_file: /Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/bot.log
+    max_log_size: 50MB
+    backup_count: 10
+    retention_period: 30  # days
+
+  monitoring:
+    enable_monitoring: true
+    monitoring_interval: 60  # seconds
+    metrics_to_monitor:
+      - cpu_usage
+      - memory_usage
+      - response_time
+      - error_rate
+      - request_count
+      - uptime
+    alerting:
+      enable_alerting: true
+      alert_thresholds:
+        cpu_usage: 80  # percentage
+        memory_usage: 75  # percentage
+        response_time: 500  # milliseconds
+        error_rate: 1  # percentage
+      alert_recipients:
+        - "admin@synnergy.network"
+        - "devops@synnergy.network"
+    logging_metrics:
+      enable_logging_metrics: true
+      log_file: /Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/metrics.log
+      log_level: INFO
+
+  audit:
+    enable_audit: true
+    audit_file: /Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/audit.log
+    log_level: INFO
+    retention_period: 365  # days
+    audit_interval: daily
+
+  data_retention:
+    enable_data_retention: true
+    retention_period: 90  # days
+    cleanup_interval: 86400  # seconds (daily)
+    excluded_logs:
+      - "critical_errors.log"
+
+  security:
+    enable_security_logging: true
+    security_log_file: /Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/security.log
+    log_level: WARN
+    log_format: "[%(asctime)s] %(levelname)s: %(message)s"
+    max_log_size: 20MB
+    backup_count: 5
+
+
+version: 1
+disable_existing_loggers: False
+formatters:
+  standard:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  detailed:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s [in %(pathname)s:%(lineno)d]'
+handlers:
+  default:
+    level: INFO
+    class: logging.StreamHandler
+    formatter: standard
+  file_handler:
+    level: DEBUG
+    class: logging.FileHandler
+    filename: 'logs/ai_conversation_bot.log'
+    formatter: detailed
+    encoding: 'utf8'
+loggers:
+  '':  # root logger
+    handlers: [default, file_handler]
+    level: DEBUG
+    propagate: True
+  ai_conversation_bot:
+    handlers: [default, file_handler]
+    level: DEBUG
+    propagate: False

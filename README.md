@@ -123,7 +123,7 @@ Description: Used for tangible asset valuation and representation, based on fixe
 
 SYN131 Token Standard:
 
-Description: Similar to SYN131, designed for intangible asset valuation and representation, with features for asset value adjustment, ownership tracking, and sale price display. can apply rental terms, licensing , change of ownership, shared ownership
+Description: Similar to SYN130, designed for intangible asset valuation and representation, with features for asset value adjustment, ownership tracking, and sale price display. can apply rental terms, licensing , change of ownership, shared ownership
 
 
 SYN223 Token Standard:

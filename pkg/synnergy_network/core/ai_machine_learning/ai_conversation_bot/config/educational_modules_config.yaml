@@ -1,0 +1,5 @@
+modules:
+  - name: Blockchain Basics
+    content_path: "/content/blockchain_basics.txt"
+  - name: Decentralized Finance
+    content_path: "/content/defi.txt"

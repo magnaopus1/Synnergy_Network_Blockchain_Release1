@@ -1,0 +1,57 @@
+ # config.toml for Forensic Node
+
+[node]
+id = "forensic-node-1"
+address = "0.0.0.0:9090"
+consensus_algorithm = "PoW"
+data_directory = "/data"
+log_directory = "/logs"
+
+[security]
+encryption_algorithm = "AES"
+key_file = "/keys/forensic_node_key"
+multi_factor_authentication = true
+
+[performance]
+cpu_cores = 8
+gpu_units = 2
+memory_limit = "32GB"
+
+[storage]
+base_path = "/data/storage"
+redundant_storage = true
+
+[network]
+max_connections = 100
+network_encryption = true
+network_encryption_algorithm = "AES"
+
+[compliance]
+regulatory_frameworks = ["GDPR", "CCPA", "HIPAA"]
+update_frequency = "daily"
+
+[logging]
+log_level = "INFO"
+log_format = "json"
+log_rotation = "daily"
+
+[monitoring]
+enabled = true
+monitoring_interval = "5m"
+alert_thresholds = { cpu_usage = "80%", memory_usage = "75%", disk_usage = "70%" }
+
+[audit]
+enable_audit_trail = true
+audit_log_path = "/logs/audit"
+
+[ml_ai]
+enable_ml = true
+ml_model_path = "/models/fraud_detection"
+model_update_frequency = "weekly"
+
+[notifications]
+enable_notifications = true
+email_recipients = ["admin@example.com", "security@example.com"]
+slack_webhook_url = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+
+# End of config.toml

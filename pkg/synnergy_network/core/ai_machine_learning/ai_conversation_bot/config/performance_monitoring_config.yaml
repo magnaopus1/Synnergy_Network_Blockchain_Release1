@@ -1,0 +1,4 @@
+monitoring_interval: 60
+logging:
+  log_file: "/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/performance_monitoring.log"
+  log_level: INFO

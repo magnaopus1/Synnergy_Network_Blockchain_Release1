@@ -1,0 +1,8 @@
+monitoring_interval: 60
+logging:
+  log_file: "/Users/admin/Desktop/synnergy_network/pkg/synnergy_network/core/ai_machine_learning/ai_conversation_bot/logs/real_time_data_access.log"
+  log_level: INFO
+api_endpoints:
+  market_data: "https://api.example.com/market_data"
+  blockchain_data: "https://api.example.com/blockchain_data"
+  user_activity: "https://api.example.com/user_activity"
