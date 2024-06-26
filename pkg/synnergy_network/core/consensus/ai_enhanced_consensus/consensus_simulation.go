@@ -1,132 +1,154 @@
-package consensus
+package ai_enhanced_consensus
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/json"
+	"fmt"
 	"log"
-	"math/big"
+	"math/rand"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/synnergy_network/pkg/synnergy_network/core/consensus_utils"
+	"github.com/synnergy_network/pkg/synnergy_network/core/consensus"
 )
 
-// Node represents a participant in the blockchain network with AI-enhanced decision capabilities
-type Node struct {
-	ID       uuid.UUID
-	Power    int64 // Node's voting power or stake in the consensus
-	IsByzantine bool
+// ConsensusSimulation represents the structure for AI-driven consensus simulation environment
+type ConsensusSimulation struct {
+	mutex        sync.Mutex
+	consensusMgr *consensus.ConsensusManager
+	params       consensus_utils.ConsensusParams
+	scenarios    []SimulationScenario
+	results      []SimulationResult
 }
 
-// NetworkSimulator represents the blockchain network simulation environment
-type NetworkSimulator struct {
-	Nodes       []*Node
-	Blockchain  []*Block
-	Latency     time.Duration // Network latency between nodes
-	Mu          sync.Mutex
-	BlockHeight int
+// SimulationScenario defines a scenario for testing consensus mechanisms
+type SimulationScenario struct {
+	Name             string
+	Description      string
+	TransactionLoad  int
+	ValidatorFailure int
+	SecurityAttack   bool
+	Duration         time.Duration
 }
 
-// Block represents a single block to be added to the blockchain
-type Block struct {
-	Index     int
-	PrevHash  string
-	Timestamp time.Time
-	Data      string
-	Hash      string
+// SimulationResult stores the results of a simulation scenario
+type SimulationResult struct {
+	ScenarioName       string
+	TransactionSuccess int
+	TransactionFail    int
+	BlockCreationTime  float64
+	ValidatorPerformance map[string]float64
+	SecurityBreaches   int
 }
 
-// NewNetworkSimulator initializes a new simulation with specified nodes and latency
-func NewNetworkSimulator(nodeCount int, latency time.Duration) *NetworkSimulator {
-	ns := &NetworkSimulator{
-		Nodes:    make([]*Node, nodeCount),
-		Blockchain: make([]*Block, 0),
-		Latency:  latency,
+// NewConsensusSimulation initializes the AI-driven consensus simulation environment
+func NewConsensusSimulation(consensusMgr *consensus.ConsensusManager) *ConsensusSimulation {
+	return &ConsensusSimulation{
+		consensusMgr: consensusMgr,
+		params:       consensus_utils.DefaultConsensusParams(),
+		scenarios:    make([]SimulationScenario, 0),
+		results:      make([]SimulationResult, 0),
 	}
+}
 
-	// Initialize nodes with random power and Byzantine trait
-	for i := 0; i < nodeCount; i++ {
-		ns.Nodes[i] = &Node{
-			ID:    uuid.New(),
-			Power: randomStake(),
-			IsByzantine: (i % 10 == 0), // 10% of nodes are Byzantine
+// AddScenario adds a new simulation scenario
+func (cs *ConsensusSimulation) AddScenario(scenario SimulationScenario) {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+	cs.scenarios = append(cs.scenarios, scenario)
+}
+
+// RunSimulations runs all added simulation scenarios
+func (cs *ConsensusSimulation) RunSimulations() {
+	for _, scenario := range cs.scenarios {
+		result := cs.runScenario(scenario)
+		cs.results = append(cs.results, result)
+		cs.logResult(result)
+	}
+}
+
+// runScenario runs a single simulation scenario and returns the result
+func (cs *ConsensusSimulation) runScenario(scenario SimulationScenario) SimulationResult {
+	startTime := time.Now()
+	successCount := 0
+	failCount := 0
+	totalBlockTime := 0.0
+	validatorPerformance := make(map[string]float64)
+	securityBreaches := 0
+
+	// Initialize simulation environment
+	cs.initSimulationEnvironment()
+
+	for time.Since(startTime) < scenario.Duration {
+		transactionLoad := scenario.TransactionLoad
+		if scenario.SecurityAttack {
+			securityBreaches++
 		}
+
+		for i := 0; i < transactionLoad; i++ {
+			if rand.Float64() < 0.95 { // Assuming 95% success rate
+				successCount++
+			} else {
+				failCount++
+			}
+		}
+
+		blockTime := cs.simulateBlockCreation()
+		totalBlockTime += blockTime
+
+		cs.simulateValidatorPerformance(validatorPerformance, scenario.ValidatorFailure)
 	}
 
-	return ns
+	return SimulationResult{
+		ScenarioName:       scenario.Name,
+		TransactionSuccess: successCount,
+		TransactionFail:    failCount,
+		BlockCreationTime:  totalBlockTime / float64(successCount+failCount),
+		ValidatorPerformance: validatorPerformance,
+		SecurityBreaches:   securityBreaches,
+	}
 }
 
-// randomStake generates a random stake value for a node
-func randomStake() int64 {
-	n, _ := rand.Int(rand.Reader, big.NewInt(1000))
-	return n.Int64() + 1 // Ensure at least 1
+// initSimulationEnvironment initializes the simulation environment
+func (cs *ConsensusSimulation) initSimulationEnvironment() {
+	// Implement initialization logic here
 }
 
-// SimulateConsensus runs the consensus process for the simulated network
-func (ns *NetworkSimulator) SimulateConsensus(data string) {
-	ns.Mu.Lock()
-	defer ns.Mu.Unlock()
-
-	block := &Block{
-		Index:     len(ns.Blockchain),
-		PrevHash:  getLastHash(ns.Blockchain),
-		Timestamp: time.Now(),
-		Data:      data,
-		Hash:      "", // This would be set by a hashing function
-	}
-
-	// Simulate network latency
-	time.Sleep(ns.Latency)
-
-	// Add block to blockchain
-	ns.Blockchain = append(ns.Blockchain, block)
-	ns.BlockHeight++
-	log.Printf("New block added by simulation: %+v", block)
+// simulateBlockCreation simulates block creation and returns the block creation time
+func (cs *ConsensusSimulation) simulateBlockCreation() float64 {
+	// Implement block creation simulation logic here
+	// Placeholder logic
+	return rand.Float64()*2 + 1
 }
 
-// getLastHash retrieves the last block's hash from the blockchain
-func getLastHash(bc []*Block) string {
-	if len(bc) > 0 {
-		return bc[len(bc)-1].Hash
+// simulateValidatorPerformance simulates validator performance under given conditions
+func (cs *ConsensusSimulation) simulateValidatorPerformance(validatorPerformance map[string]float64, failureRate int) {
+	// Implement validator performance simulation logic here
+	// Placeholder logic
+	for i := 0; i < 10; i++ {
+		validatorID := fmt.Sprintf("validator-%d", i)
+		performance := 1.0
+		if rand.Intn(100) < failureRate {
+			performance = 0.0
+		}
+		validatorPerformance[validatorID] = performance
 	}
-	return ""
 }
 
-// EncryptNodeData uses AES encryption to securely transmit node data
-func EncryptNodeData(data []byte, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
+// logResult logs the result of a simulation scenario
+func (cs *ConsensusSimulation) logResult(result SimulationResult) {
+	log.Printf("Simulation Result for Scenario: %s", result.ScenarioName)
+	log.Printf("Transactions Success: %d, Fail: %d", result.TransactionSuccess, result.TransactionFail)
+	log.Printf("Average Block Creation Time: %.2f seconds", result.BlockCreationTime)
+	for validator, performance := range result.ValidatorPerformance {
+		log.Printf("Validator: %s, Performance: %.2f", validator, performance)
 	}
-
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, aesGCM.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-
-	encryptedData := aesGCM.Seal(nonce, nonce, data, nil)
-	return encryptedData, nil
+	log.Printf("Security Breaches: %d", result.SecurityBreaches)
 }
 
-// Example usage
-func main() {
-	sim := NewNetworkSimulator(100, 50*time.Millisecond)
-	sim.SimulateConsensus("Example transaction data")
-
-	// Example encryption of node data
-	nodeData, _ := json.Marshal(sim.Nodes[0])
-	key := []byte("this_is_a_very_secure_key123")
-	encryptedData, err := EncryptNodeData(nodeData, key)
-	if err != nil {
-		log.Fatal("Encryption error:", err)
-	}
-
-	log.Printf("Encrypted Node Data: %x", encryptedData)
+// GetResults returns the results of all simulation scenarios
+func (cs *ConsensusSimulation) GetResults() []SimulationResult {
+	cs.mutex.Lock()
+	defer cs.mutex.Unlock()
+	return cs.results
 }
+

@@ -1,113 +1,126 @@
-package consensus
+package ai_enhanced_consensus
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/json"
+	"database/sql"
 	"log"
 	"sync"
 	"time"
+
+	_ "github.com/lib/pq"
+	"github.com/synnergy_network/pkg/synnergy_network/core/consensus_utils"
+	"github.com/synnergy_network/pkg/synnergy_network/core/consensus"
+	"github.com/synnergy_network/pkg/synnergy_network/core/encryption"
 )
 
-// ConsensusMetrics defines the structure to hold metrics related to consensus operations
-type ConsensusMetrics struct {
-	mutex                sync.Mutex
-	TotalBlocksValidated int
-	TotalConsensusTime   time.Duration
-	AverageConsensusTime time.Duration
-	LastBlockTime        time.Time
+// ConsensusMetricsAI represents the structure for AI-driven consensus metrics monitoring
+type ConsensusMetricsAI struct {
+	db           *sql.DB
+	mutex        sync.Mutex
+	consensusMgr *consensus.ConsensusManager
+	params       consensus_utils.ConsensusParams
 }
 
-// NewConsensusMetrics initializes a new instance of consensus metrics
-func NewConsensusMetrics() *ConsensusMetrics {
-	return &ConsensusMetrics{}
+// NewConsensusMetricsAI initializes the AI-driven consensus metrics monitoring
+func NewConsensusMetricsAI(db *sql.DB, consensusMgr *consensus.ConsensusManager) *ConsensusMetricsAI {
+	return &ConsensusMetricsAI{
+		db:           db,
+		consensusMgr: consensusMgr,
+		params:       consensus_utils.DefaultConsensusParams(),
+	}
 }
 
-// RecordBlockValidation updates metrics after a block is validated
-func (cm *ConsensusMetrics) RecordBlockValidation(duration time.Duration) {
-	cm.mutex.Lock()
-	defer cm.mutex.Unlock()
-
-	cm.TotalBlocksValidated++
-	cm.TotalConsensusTime += duration
-	cm.AverageConsensusTime = cm.TotalConsensusTime / time.Duration(cm.TotalBlocksValidated)
-	cm.LastBlockTime = time.Now()
-
-	log.Printf("Block validated at %v, Total Validations: %d, Average Consensus Time: %v",
-		cm.LastBlockTime, cm.TotalBlocksValidated, cm.AverageConsensusTime)
+// MonitorMetrics continuously monitors the consensus metrics of the network
+func (cma *ConsensusMetricsAI) MonitorMetrics() {
+	for {
+		time.Sleep(1 * time.Minute)
+		metricsData := cma.fetchMetricsData()
+		anomalies := cma.detectAnomalies(metricsData)
+		if len(anomalies) > 0 {
+			cma.respondToAnomalies(anomalies)
+		}
+		cma.logMetrics(metricsData)
+	}
 }
 
-// EncryptMetrics encrypts the metrics for secure storage or transmission
-func (cm *ConsensusMetrics) EncryptMetrics(key []byte) ([]byte, error) {
-	cm.mutex.Lock()
-	data, err := json.Marshal(cm)
-	cm.mutex.Unlock()
+// fetchMetricsData retrieves historical metrics data from the database
+func (cma *ConsensusMetricsAI) fetchMetricsData() []consensus_utils.MetricsData {
+	var metricsData []consensus_utils.MetricsData
+	rows, err := cma.db.Query("SELECT timestamp, transaction_throughput, block_propagation_time, validator_performance, security_alerts FROM metrics ORDER BY timestamp DESC LIMIT 100")
 	if err != nil {
-		return nil, err
+		log.Fatal(err)
 	}
+	defer rows.Close()
 
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
+	for rows.Next() {
+		var data consensus_utils.MetricsData
+		if err := rows.Scan(&data.Timestamp, &data.TransactionThroughput, &data.BlockPropagationTime, &data.ValidatorPerformance, &data.SecurityAlerts); err != nil {
+			log.Fatal(err)
+		}
+		metricsData = append(metricsData, data)
 	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	encrypted := gcm.Seal(nonce, nonce, data, nil)
-	return encrypted, nil
+	return metricsData
 }
 
-// DecryptMetrics decrypts the encrypted metrics data
-func DecryptMetrics(encryptedData, key []byte) (*ConsensusMetrics, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
+// detectAnomalies uses machine learning to detect anomalies in consensus metrics data
+func (cma *ConsensusMetricsAI) detectAnomalies(metricsData []consensus_utils.MetricsData) []consensus_utils.Anomaly {
+	// Implement anomaly detection model here
+	// This is a placeholder for the actual ML model
+	var anomalies []consensus_utils.Anomaly
+	for _, data := range metricsData {
+		if data.SecurityAlerts > 0.7 || data.TransactionThroughput < 0.5 {
+			anomalies = append(anomalies, consensus_utils.Anomaly{Timestamp: data.Timestamp, Score: data.SecurityAlerts})
+		}
 	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(encryptedData) < nonceSize {
-		return nil, errors.New("encrypted data too short")
-	}
-
-	nonce, ciphertext := encryptedData[:nonceSize], encryptedData[nonceSize:]
-	data, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var metrics ConsensusMetrics
-	err = json.Unmarshal(data, &metrics)
-	if err != nil {
-		return nil, err
-	}
-	return &metrics, nil
+	return anomalies
 }
 
-// Example usage within consensus system
-func main() {
-	metrics := NewConsensusMetrics()
-	metrics.RecordBlockValidation(time.Millisecond * 450)
-
-	key := []byte("an-example-very-secure-key")
-	encryptedMetrics, err := metrics.EncryptMetrics(key)
-	if err != nil {
-		log.Fatal("Error encrypting metrics:", err)
+// respondToAnomalies responds to detected anomalies to maintain network stability
+func (cma *ConsensusMetricsAI) respondToAnomalies(anomalies []consensus_utils.Anomaly) {
+	for _, anomaly := range anomalies {
+		log.Printf("Consensus Anomaly detected: Timestamp=%s, Score=%.2f. Responding appropriately.", anomaly.Timestamp, anomaly.Score)
+		// Implement response strategy here
+		cma.consensusMgr.AdjustConsensusParameters(anomaly.Score)
 	}
+}
 
-	// Example of decrypting metrics
-	decryptedMetrics, err := DecryptMetrics(encryptedMetrics, key)
-	if err != nil {
-		log.Fatal("Error decrypting metrics:", err)
+// logMetrics logs consensus metrics for auditing and transparency
+func (cma *ConsensusMetricsAI) logMetrics(metricsData []consensus_utils.MetricsData) {
+	for _, data := range metricsData {
+		log.Printf("Consensus Metric: Timestamp=%s, TransactionThroughput=%.2f, BlockPropagationTime=%.2f, ValidatorPerformance=%.2f, SecurityAlerts=%.2f",
+			data.Timestamp, data.TransactionThroughput, data.BlockPropagationTime, data.ValidatorPerformance, data.SecurityAlerts)
 	}
+}
 
-	log.Printf("Decrypted Metrics: %+v", decryptedMetrics)
+// PredictMetrics uses AI to predict future metrics based on historical data
+func (cma *ConsensusMetricsAI) PredictMetrics() []consensus_utils.MetricsPrediction {
+	metricsData := cma.fetchMetricsData()
+	predictions := cma.runPredictionModel(metricsData)
+	cma.logPredictions(predictions)
+	return predictions
+}
+
+// runPredictionModel uses a machine learning model to predict future metrics
+func (cma *ConsensusMetricsAI) runPredictionModel(metricsData []consensus_utils.MetricsData) []consensus_utils.MetricsPrediction {
+	// Implement prediction model here
+	// This is a placeholder for the actual prediction model
+	var predictions []consensus_utils.MetricsPrediction
+	for _, data := range metricsData {
+		prediction := consensus_utils.MetricsPrediction{
+			Timestamp:             data.Timestamp.Add(1 * time.Hour),
+			PredictedThroughput:   data.TransactionThroughput * 1.05, // Placeholder logic
+			PredictedPropagation:  data.BlockPropagationTime * 0.95,  // Placeholder logic
+			PredictedPerformance:  data.ValidatorPerformance * 1.03,  // Placeholder logic
+			PredictedSecurityAlert: data.SecurityAlerts * 1.02,       // Placeholder logic
+		}
+		predictions = append(predictions, prediction)
+	}
+	return predictions
+}
+
+// logPredictions logs the predicted metrics
+func (cma *ConsensusMetricsAI) logPredictions(predictions []consensus_utils.MetricsPrediction) {
+	for _, prediction := range predictions {
+		log.Printf("Consensus Metric Prediction: Timestamp=%s, PredictedThroughput=%.2f, PredictedPropagation=%.2f, PredictedPerformance=%.2f, PredictedSecurityAlert=%.2f",
+			prediction.Timestamp, prediction.PredictedThroughput, prediction.PredictedPropagation, prediction.PredictedPerformance, prediction.PredictedSecurityAlert)
+	}
 }
