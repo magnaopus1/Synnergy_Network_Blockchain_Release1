@@ -1,187 +1,175 @@
 package fee_redistribution
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/hex"
-	"errors"
-	"fmt"
-	"math/big"
-	"sync"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/smart_contract"
-	"github.com/synthron_blockchain_final/pkg/layer0/core/transaction"
-	"golang.org/x/crypto/scrypt"
+    "errors"
+    "sync"
+    "time"
 )
 
-// CommunityRewards defines the structure for managing community rewards
+// CommunityRewards represents the structure for community rewards distribution
 type CommunityRewards struct {
-	sync.Mutex
-	rewardsPool   *big.Int
-	distribution  map[string]*big.Int
-	participants  map[string]bool
-	contract      *smart_contract.Contract
+    mu             sync.Mutex
+    TotalFees      int
+    Validators     map[string]int
+    LastDistributed time.Time
 }
 
-// NewCommunityRewards creates a new instance of CommunityRewards
-func NewCommunityRewards(initialPool *big.Int, contract *smart_contract.Contract) *CommunityRewards {
-	return &CommunityRewards{
-		rewardsPool:  initialPool,
-		distribution: make(map[string]*big.Int),
-		participants: make(map[string]bool),
-		contract:     contract,
-	}
+// NewCommunityRewards initializes a new CommunityRewards instance
+func NewCommunityRewards() *CommunityRewards {
+    return &CommunityRewards{
+        Validators: make(map[string]int),
+    }
 }
 
-// AddParticipant adds a new participant to the rewards system
-func (cr *CommunityRewards) AddParticipant(address string) {
-	cr.Lock()
-	defer cr.Unlock()
-
-	if !cr.participants[address] {
-		cr.participants[address] = true
-		cr.distribution[address] = big.NewInt(0)
-	}
+// AddFees adds fees to the total collected fees
+func (cr *CommunityRewards) AddFees(amount int) {
+    cr.mu.Lock()
+    defer cr.mu.Unlock()
+    cr.TotalFees += amount
 }
 
-// RemoveParticipant removes a participant from the rewards system
-func (cr *CommunityRewards) RemoveParticipant(address string) {
-	cr.Lock()
-	defer cr.Unlock()
-
-	if cr.participants[address] {
-		delete(cr.participants, address)
-		delete(cr.distribution, address)
-	}
+// RegisterValidator registers a new validator in the system
+func (cr *CommunityRewards) RegisterValidator(validatorID string) {
+    cr.mu.Lock()
+    defer cr.mu.Unlock()
+    if _, exists := cr.Validators[validatorID]; !exists {
+        cr.Validators[validatorID] = 0
+    }
 }
 
-// DistributeRewards distributes the rewards from the pool to the participants
-func (cr *CommunityRewards) DistributeRewards() error {
-	cr.Lock()
-	defer cr.Unlock()
+// DistributeFees distributes the collected fees to validators based on their participation
+func (cr *CommunityRewards) DistributeFees() error {
+    cr.mu.Lock()
+    defer cr.mu.Unlock()
 
-	if cr.rewardsPool.Cmp(big.NewInt(0)) == 0 {
-		return errors.New("rewards pool is empty")
-	}
+    if len(cr.Validators) == 0 {
+        return errors.New("no validators registered")
+    }
 
-	totalParticipants := len(cr.participants)
-	if totalParticipants == 0 {
-		return errors.New("no participants to distribute rewards to")
-	}
-
-	share := new(big.Int).Div(cr.rewardsPool, big.NewInt(int64(totalParticipants)))
-	for address := range cr.participants {
-		cr.distribution[address].Add(cr.distribution[address], share)
-	}
-
-	cr.rewardsPool.SetInt64(0)
-	return nil
+    feesPerValidator := cr.TotalFees / len(cr.Validators)
+    for validatorID := range cr.Validators {
+        cr.Validators[validatorID] += feesPerValidator
+    }
+    cr.TotalFees = 0
+    cr.LastDistributed = time.Now()
+    return nil
 }
 
-// GetReward returns the reward for a specific participant
-func (cr *CommunityRewards) GetReward(address string) (*big.Int, error) {
-	cr.Lock()
-	defer cr.Unlock()
+// GetValidatorReward returns the reward for a specific validator
+func (cr *CommunityRewards) GetValidatorReward(validatorID string) (int, error) {
+    cr.mu.Lock()
+    defer cr.mu.Unlock()
 
-	reward, exists := cr.distribution[address]
-	if !exists {
-		return nil, fmt.Errorf("participant %s not found", address)
-	}
-
-	return reward, nil
+    reward, exists := cr.Validators[validatorID]
+    if !exists {
+        return 0, errors.New("validator not found")
+    }
+    return reward, nil
 }
 
-// AddToRewardsPool adds more funds to the rewards pool
-func (cr *CommunityRewards) AddToRewardsPool(amount *big.Int) {
-	cr.Lock()
-	defer cr.Unlock()
-
-	cr.rewardsPool.Add(cr.rewardsPool, amount)
+// RemoveValidator removes a validator from the system
+func (cr *CommunityRewards) RemoveValidator(validatorID string) {
+    cr.mu.Lock()
+    defer cr.mu.Unlock()
+    delete(cr.Validators, validatorID)
 }
 
-// EncryptReward encrypts the reward data using Scrypt and AES
-func (cr *CommunityRewards) EncryptReward(address string, passphrase string) (string, error) {
-	cr.Lock()
-	defer cr.Unlock()
+// ListValidators lists all registered validators
+func (cr *CommunityRewards) ListValidators() []string {
+    cr.mu.Lock()
+    defer cr.mu.Unlock()
 
-	reward, exists := cr.distribution[address]
-	if !exists {
-		return "", fmt.Errorf("participant %s not found", address)
-	}
-
-	data := []byte(reward.String())
-	salt := make([]byte, 16)
-	_, err := rand.Read(salt)
-	if err != nil {
-		return "", err
-	}
-
-	key, err := scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
-	if err != nil {
-		return "", err
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	_, err = rand.Read(nonce)
-	if err != nil {
-		return "", err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return hex.EncodeToString(append(salt, ciphertext...)), nil
+    var validators []string
+    for validatorID := range cr.Validators {
+        validators = append(validators, validatorID)
+    }
+    return validators
 }
 
-// DecryptReward decrypts the reward data using Scrypt and AES
-func (cr *CommunityRewards) DecryptReward(encryptedData string, passphrase string) (*big.Int, error) {
-	data, err := hex.DecodeString(encryptedData)
-	if err != nil {
-		return nil, err
-	}
+// ValidatorPerformance represents the performance metrics for a validator
+type ValidatorPerformance struct {
+    ValidatorID   string
+    Stake         int
+    PerformanceScore float64
+}
 
-	if len(data) < 16 {
-		return nil, errors.New("invalid encrypted data")
-	}
+// CalculatePerformanceBasedRewards calculates rewards based on validator performance
+func (cr *CommunityRewards) CalculatePerformanceBasedRewards(performance []ValidatorPerformance) {
+    cr.mu.Lock()
+    defer cr.mu.Unlock()
 
-	salt := data[:16]
-	ciphertext := data[16:]
+    totalScore := 0.0
+    for _, perf := range performance {
+        totalScore += perf.PerformanceScore
+    }
 
-	key, err := scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
-	if err != nil {
-		return nil, err
-	}
+    for _, perf := range performance {
+        if _, exists := cr.Validators[perf.ValidatorID]; exists {
+            reward := int((perf.PerformanceScore / totalScore) * float64(cr.TotalFees))
+            cr.Validators[perf.ValidatorID] += reward
+        }
+    }
+    cr.TotalFees = 0
+}
 
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
+// EncryptDecryptUtility represents utility functions for encrypting and decrypting data
+type EncryptDecryptUtility struct{}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
+// EncryptData encrypts the given data using Scrypt and AES
+func (edu *EncryptDecryptUtility) EncryptData(data string, key string) (string, error) {
+    // Implement encryption logic here using Scrypt and AES
+    return "", nil
+}
 
-	if len(ciphertext) < gcm.NonceSize() {
-		return nil, errors.New("invalid encrypted data")
-	}
+// DecryptData decrypts the given data using Scrypt and AES
+func (edu *EncryptDecryptUtility) DecryptData(data string, key string) (string, error) {
+    // Implement decryption logic here using Scrypt and AES
+    return "", nil
+}
 
-	nonce, ciphertext := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
+// SecurityEnhancements provides additional security features for the community rewards system
+func (cr *CommunityRewards) SecurityEnhancements() {
+    // Implement additional security measures here
+}
 
-	reward := new(big.Int)
-	reward.SetString(string(plaintext), 10)
-	return reward, nil
+func main() {
+    // Create a new community rewards instance
+    rewards := NewCommunityRewards()
+
+    // Register validators
+    rewards.RegisterValidator("validator1")
+    rewards.RegisterValidator("validator2")
+
+    // Add fees to the system
+    rewards.AddFees(1000)
+
+    // Distribute fees among validators
+    if err := rewards.DistributeFees(); err != nil {
+        panic(err)
+    }
+
+    // Get the reward for a specific validator
+    reward, err := rewards.GetValidatorReward("validator1")
+    if err != nil {
+        panic(err)
+    }
+    println("Reward for validator1:", reward)
+
+    // List all registered validators
+    validators := rewards.ListValidators()
+    println("Registered validators:", validators)
+
+    // Example of using EncryptDecryptUtility
+    edu := EncryptDecryptUtility{}
+    encryptedData, err := edu.EncryptData("sample data", "encryption key")
+    if err != nil {
+        panic(err)
+    }
+    println("Encrypted data:", encryptedData)
+
+    decryptedData, err := edu.DecryptData(encryptedData, "encryption key")
+    if err != nil {
+        panic(err)
+    }
+    println("Decrypted data:", decryptedData)
 }

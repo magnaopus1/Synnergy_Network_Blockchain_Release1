@@ -1,179 +1,226 @@
 package dynamic_incentives
 
 import (
-	"fmt"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"io"
 	"math/big"
+	"os"
 	"sync"
-	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
-// IncentiveType defines the type of incentive (e.g., mining, staking, governance)
-type IncentiveType string
-
+// Constants for dynamic incentive calculations
 const (
-	MiningIncentive      IncentiveType = "mining"
-	StakingIncentive     IncentiveType = "staking"
-	GovernanceIncentive  IncentiveType = "governance"
-	TransactionIncentive IncentiveType = "transaction"
+	BaseDynamicReward  = 10.0
+	MaxPerformanceScore = 100.0
 )
 
-// Incentive defines the structure of an incentive
-type Incentive struct {
-	Type      IncentiveType
-	Amount    *big.Int
-	IssuedAt  time.Time
-	Expiry    time.Time
-	Recipient string
+// Reward structure
+type Reward struct {
+	DynamicIncentive float64 `json:"dynamic_incentive"`
 }
 
-// DynamicIncentiveManager manages the dynamic incentives in the network
-type DynamicIncentiveManager struct {
-	incentives map[string][]*Incentive
-	mu         sync.Mutex
+// User structure
+type User struct {
+	ID             string  `json:"id"`
+	Stake          float64 `json:"stake"`
+	PerformanceScore float64 `json:"performance_score"`
 }
 
-// NewDynamicIncentiveManager initializes a new DynamicIncentiveManager
-func NewDynamicIncentiveManager() *DynamicIncentiveManager {
-	return &DynamicIncentiveManager{
-		incentives: make(map[string][]*Incentive),
+// NetworkMetrics structure
+type NetworkMetrics struct {
+	PerformanceScore float64 `json:"performance_score"`
+	TotalTransactionVolume float64 `json:"total_transaction_volume"`
+}
+
+// IncentiveSystem structure
+type IncentiveSystem struct {
+	mu              sync.Mutex
+	Users           map[string]*User
+	NetworkMetrics  NetworkMetrics
+	TotalStake      float64
+}
+
+// NewIncentiveSystem initializes a new incentive system
+func NewIncentiveSystem() *IncentiveSystem {
+	return &IncentiveSystem{
+		Users: make(map[string]*User),
 	}
 }
 
-// IssueIncentive issues a new dynamic incentive to a user
-func (dim *DynamicIncentiveManager) IssueIncentive(recipient string, incentiveType IncentiveType, amount *big.Int, duration time.Duration) (*Incentive, error) {
-	if amount.Cmp(big.NewInt(0)) <= 0 {
-		return nil, fmt.Errorf("incentive amount must be positive")
+// AddUser adds a new user to the incentive system
+func (is *IncentiveSystem) AddUser(id string, stake, performanceScore float64) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	is.Users[id] = &User{
+		ID:              id,
+		Stake:           stake,
+		PerformanceScore: performanceScore,
 	}
-
-	incentive := &Incentive{
-		Type:      incentiveType,
-		Amount:    amount,
-		IssuedAt:  time.Now(),
-		Expiry:    time.Now().Add(duration),
-		Recipient: recipient,
-	}
-
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-	dim.incentives[recipient] = append(dim.incentives[recipient], incentive)
-
-	fmt.Printf("Issued incentive of type %s to user %s with amount %s\n", incentiveType, recipient, amount.String())
-	return incentive, nil
+	is.TotalStake += stake
 }
 
-// RedeemIncentive redeems an incentive for a user
-func (dim *DynamicIncentiveManager) RedeemIncentive(recipient string, incentiveType IncentiveType) (*Incentive, error) {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-
-	userIncentives, exists := dim.incentives[recipient]
-	if !exists || len(userIncentives) == 0 {
-		return nil, fmt.Errorf("no incentives found for user %s", recipient)
-	}
-
-	var redeemedIncentive *Incentive
-	for i, incentive := range userIncentives {
-		if incentive.Type == incentiveType && time.Now().Before(incentive.Expiry) {
-			redeemedIncentive = incentive
-			// Remove redeemed incentive
-			dim.incentives[recipient] = append(userIncentives[:i], userIncentives[i+1:]...)
-			break
-		}
-	}
-
-	if redeemedIncentive == nil {
-		return nil, fmt.Errorf("no valid incentive of type %s found for user %s", incentiveType, recipient)
-	}
-
-	fmt.Printf("Redeemed incentive of type %s for user %s with amount %s\n", incentiveType, recipient, redeemedIncentive.Amount.String())
-	return redeemedIncentive, nil
+// CalculateDynamicIncentive calculates the dynamic incentive for a user
+func (is *IncentiveSystem) CalculateDynamicIncentive(user *User) float64 {
+	return BaseDynamicReward * (1 + user.PerformanceScore/MaxPerformanceScore)
 }
 
-// GetIncentives lists all incentives for a user
-func (dim *DynamicIncentiveManager) GetIncentives(recipient string) ([]*Incentive, error) {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-
-	userIncentives, exists := dim.incentives[recipient]
+// CalculateRewards calculates all types of rewards for a user
+func (is *IncentiveSystem) CalculateRewards(userID string) (*Reward, error) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
 	if !exists {
-		return nil, fmt.Errorf("no incentives found for user %s", recipient)
+		return nil, errors.New("user not found")
 	}
 
-	return userIncentives, nil
+	dynamicIncentive := is.CalculateDynamicIncentive(user)
+
+	return &Reward{
+		DynamicIncentive: dynamicIncentive,
+	}, nil
 }
 
-// CleanExpiredIncentives removes expired incentives from the system
-func (dim *DynamicIncentiveManager) CleanExpiredIncentives() {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-
-	for recipient, incentives := range dim.incentives {
-		var validIncentives []*Incentive
-		for _, incentive := range incentives {
-			if time.Now().Before(incentive.Expiry) {
-				validIncentives = append(validIncentives, incentive)
-			} else {
-				fmt.Printf("Removed expired incentive of type %s for user %s with amount %s\n", incentive.Type, recipient, incentive.Amount.String())
-			}
-		}
-		dim.incentives[recipient] = validIncentives
+// Encrypt data using AES with Argon2 for key derivation
+func Encrypt(data []byte, passphrase string) ([]byte, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
 	}
+
+	key := argon2.IDKey([]byte(passphrase), salt, 1, 64*1024, 4, 32)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, data, nil)
+	return append(salt, ciphertext...), nil
 }
 
-// AdjustIncentives dynamically adjusts the incentives based on network conditions
-func (dim *DynamicIncentiveManager) AdjustIncentives(networkCondition string) {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-
-	for _, incentives := range dim.incentives {
-		for _, incentive := range incentives {
-			switch networkCondition {
-			case "high_congestion":
-				incentive.Amount = new(big.Int).Div(incentive.Amount, big.NewInt(2)) // Halve the incentive amount
-				fmt.Printf("Adjusted incentive of type %s for user %s due to high congestion. New amount: %s\n", incentive.Type, incentive.Recipient, incentive.Amount.String())
-			case "low_activity":
-				incentive.Amount = new(big.Int).Mul(incentive.Amount, big.NewInt(2)) // Double the incentive amount
-				fmt.Printf("Adjusted incentive of type %s for user %s due to low activity. New amount: %s\n", incentive.Type, incentive.Recipient, incentive.Amount.String())
-			}
-		}
+// Decrypt data using AES with Argon2 for key derivation
+func Decrypt(data []byte, passphrase string) ([]byte, error) {
+	if len(data) < 16 {
+		return nil, errors.New("ciphertext too short")
 	}
+
+	salt := data[:16]
+	data = data[16:]
+
+	key := argon2.IDKey([]byte(passphrase), salt, 1, 64*1024, 4, 32)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return nil, errors.New("ciphertext too short")
+	}
+
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-func main() {
-	dim := NewDynamicIncentiveManager()
-	amount := big.NewInt(1000)
-
-	// Issue an incentive
-	incentive, err := dim.IssueIncentive("user1", MiningIncentive, amount, 7*24*time.Hour) // 7 days expiry
+// SerializeReward serializes the reward into a JSON string
+func SerializeReward(reward *Reward) (string, error) {
+	bytes, err := json.Marshal(reward)
 	if err != nil {
-		fmt.Println("Error issuing incentive:", err)
-		return
+		return "", err
 	}
+	return string(bytes), nil
+}
 
-	fmt.Println("Issued incentive:", incentive)
-
-	// Redeem an incentive
-	redeemedIncentive, err := dim.RedeemIncentive("user1", MiningIncentive)
+// DeserializeReward deserializes the reward from a JSON string
+func DeserializeReward(data string) (*Reward, error) {
+	var reward Reward
+	err := json.Unmarshal([]byte(data), &reward)
 	if err != nil {
-		fmt.Println("Error redeeming incentive:", err)
-		return
+		return nil, err
 	}
+	return &reward, nil
+}
 
-	fmt.Println("Redeemed incentive:", redeemedIncentive)
-
-	// List incentives for a user
-	incentives, err := dim.GetIncentives("user1")
+// SaveEncryptedReward saves the encrypted reward to a file
+func SaveEncryptedReward(reward *Reward, passphrase, filepath string) error {
+	data, err := SerializeReward(reward)
 	if err != nil {
-		fmt.Println("Error listing incentives:", err)
-		return
+		return err
 	}
+	encryptedData, err := Encrypt([]byte(data), passphrase)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath, encryptedData, 0644)
+}
 
-	fmt.Println("Incentives for user1:", incentives)
+// LoadEncryptedReward loads and decrypts the reward from a file
+func LoadEncryptedReward(passphrase, filepath string) (*Reward, error) {
+	encryptedData, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := Decrypt(encryptedData, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	return DeserializeReward(string(data))
+}
 
-	// Adjust incentives based on network conditions
-	dim.AdjustIncentives("high_congestion")
-	dim.AdjustIncentives("low_activity")
+// UpdateNetworkMetrics updates the network performance metrics
+func (is *IncentiveSystem) UpdateNetworkMetrics(performanceScore, totalTransactionVolume float64) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	is.NetworkMetrics.PerformanceScore = performanceScore
+	is.NetworkMetrics.TotalTransactionVolume = totalTransactionVolume
+}
 
-	// Clean expired incentives
-	dim.CleanExpiredIncentives()
+// AdjustUserPerformanceScore adjusts the performance score of a user
+func (is *IncentiveSystem) AdjustUserPerformanceScore(userID string, adjustment float64) error {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
+	if !exists {
+		return errors.New("user not found")
+	}
+	user.PerformanceScore += adjustment
+	if user.PerformanceScore > MaxPerformanceScore {
+		user.PerformanceScore = MaxPerformanceScore
+	} else if user.PerformanceScore < 0 {
+		user.PerformanceScore = 0
+	}
+	return nil
+}
+
+// ListUsers returns a list of all users in the incentive system
+func (is *IncentiveSystem) ListUsers() []*User {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	users := []*User{}
+	for _, user := range is.Users {
+		users = append(users, user)
+	}
+	return users
 }

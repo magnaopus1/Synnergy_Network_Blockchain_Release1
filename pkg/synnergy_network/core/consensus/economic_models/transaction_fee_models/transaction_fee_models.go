@@ -2,188 +2,218 @@ package transaction_fee_models
 
 import (
 	"errors"
-	"sync"
 	"time"
 )
 
-// FeeModel defines the interface for different transaction fee models
-type FeeModel interface {
-	CalculateFee(transactionSize int, operationType string, networkCongestion int) (int, error)
-	DistributeFees(totalFee int) error
+// VariableFeeStructure represents the structure for dynamic fee calculations
+type VariableFeeStructure struct {
+	BaseFee       float64
+	TransactionVolume int
+	MaxTransactionVolume int
+	LastUpdated   time.Time
 }
 
-// VariableFeeModel implements a variable transaction fee model
-type VariableFeeModel struct {
-	mu               sync.Mutex
-	baseFee          int
-	congestionFactor int
-	sizeFactor       int
-	operationFactors map[string]int
-}
-
-// NewVariableFeeModel creates a new VariableFeeModel with initial values
-func NewVariableFeeModel(baseFee, congestionFactor, sizeFactor int, operationFactors map[string]int) *VariableFeeModel {
-	return &VariableFeeModel{
-		baseFee:          baseFee,
-		congestionFactor: congestionFactor,
-		sizeFactor:       sizeFactor,
-		operationFactors: operationFactors,
+// NewVariableFeeStructure initializes a new VariableFeeStructure instance
+func NewVariableFeeStructure(baseFee float64, maxVolume int) *VariableFeeStructure {
+	return &VariableFeeStructure{
+		BaseFee:              baseFee,
+		MaxTransactionVolume: maxVolume,
 	}
 }
 
-// CalculateFee calculates the fee for a transaction based on size, operation type, and network congestion
-func (vfm *VariableFeeModel) CalculateFee(transactionSize int, operationType string, networkCongestion int) (int, error) {
-	vfm.mu.Lock()
-	defer vfm.mu.Unlock()
-
-	opFactor, exists := vfm.operationFactors[operationType]
-	if !exists {
-		return 0, errors.New("invalid operation type")
+// CalculateFee calculates the variable fee based on transaction volume
+func (vfs *VariableFeeStructure) CalculateFee(transactionVolume int) (float64, error) {
+	if transactionVolume > vfs.MaxTransactionVolume {
+		return 0, errors.New("transaction volume exceeds maximum allowed volume")
 	}
-
-	fee := vfm.baseFee + (networkCongestion * vfm.congestionFactor) + (transactionSize * vfm.sizeFactor) + opFactor
-	return fee, nil
+	vfs.TransactionVolume = transactionVolume
+	vfs.LastUpdated = time.Now()
+	return vfs.BaseFee * (1 + (float64(transactionVolume) / float64(vfs.MaxTransactionVolume))), nil
 }
 
-// DistributeFees distributes the collected fees to different parties (e.g., miners, public goods)
-func (vfm *VariableFeeModel) DistributeFees(totalFee int) error {
-	// Implement the logic to distribute fees
-	// For demonstration purposes, we'll just print the distribution
-	minerFee := int(0.8 * float64(totalFee))
-	publicGoodsFee := totalFee - minerFee
-
-	// Simulate the distribution
-	println("Distributed to miners:", minerFee)
-	println("Distributed to public goods:", publicGoodsFee)
-
-	return nil
+// FeeRedistributionMechanism represents the structure for fee redistribution
+type FeeRedistributionMechanism struct {
+	TotalCollectedFees float64
+	NumberOfValidators int
 }
 
-// ZeroFeeModel implements a zero-fee transaction model under specific conditions
-type ZeroFeeModel struct {
-	mu                sync.Mutex
-	allowedAccounts   map[string]bool
-	thresholdAmount   int64
-	allowedOperations map[string]bool
+// NewFeeRedistributionMechanism initializes a new FeeRedistributionMechanism instance
+func NewFeeRedistributionMechanism() *FeeRedistributionMechanism {
+	return &FeeRedistributionMechanism{}
 }
 
-// NewZeroFeeModel creates a new ZeroFeeModel with initial values
-func NewZeroFeeModel(thresholdAmount int64, allowedOperations []string) *ZeroFeeModel {
-	allowedOps := make(map[string]bool)
-	for _, op := range allowedOperations {
-		allowedOps[op] = true
+// AddCollectedFee adds a collected fee to the total
+func (frm *FeeRedistributionMechanism) AddCollectedFee(fee float64) {
+	frm.TotalCollectedFees += fee
+}
+
+// CalculateRedistributedFee calculates the fee to be redistributed to each validator
+func (frm *FeeRedistributionMechanism) CalculateRedistributedFee() (float64, error) {
+	if frm.NumberOfValidators == 0 {
+		return 0, errors.New("number of validators cannot be zero")
 	}
-	return &ZeroFeeModel{
-		allowedAccounts:   make(map[string]bool),
-		thresholdAmount:   thresholdAmount,
-		allowedOperations: allowedOps,
-	}
+	return frm.TotalCollectedFees / float64(frm.NumberOfValidators), nil
 }
 
-// AddAllowedAccount adds an account to the allowed zero-fee list
-func (zfm *ZeroFeeModel) AddAllowedAccount(account string) {
-	zfm.mu.Lock()
-	defer zfm.mu.Unlock()
-	zfm.allowedAccounts[account] = true
+// ZeroFeePolicy represents the structure for managing zero-fee transaction policies
+type ZeroFeePolicy struct {
+	SustainabilityTransactions bool
+	Microtransactions          bool
+	MicrotransactionThreshold  int
+	ActivePolicies             map[string]bool
+	LastUpdated                time.Time
 }
 
-// RemoveAllowedAccount removes an account from the allowed zero-fee list
-func (zfm *ZeroFeeModel) RemoveAllowedAccount(account string) {
-	zfm.mu.Lock()
-	defer zfm.mu.Unlock()
-	delete(zfm.allowedAccounts, account)
-}
-
-// CalculateFee calculates the fee for a transaction, potentially zero if conditions are met
-func (zfm *ZeroFeeModel) CalculateFee(transactionSize int, operationType string, networkCongestion int) (int, error) {
-	zfm.mu.Lock()
-	defer zfm.mu.Unlock()
-
-	if !zfm.allowedOperations[operationType] {
-		return 0, errors.New("operation not eligible for zero-fee")
-	}
-
-	if transactionSize <= int(zfm.thresholdAmount) {
-		return 0, nil
-	}
-
-	return int(transactionSize), nil
-}
-
-// DistributeFees for ZeroFeeModel would normally be a no-op
-func (zfm *ZeroFeeModel) DistributeFees(totalFee int) error {
-	// ZeroFeeModel might not need to distribute fees, but this is a placeholder
-	return nil
-}
-
-// FeeManager manages different fee models and applies the appropriate one based on conditions
-type FeeManager struct {
-	mu             sync.Mutex
-	feeModels      map[string]FeeModel
-	defaultFeeModel FeeModel
-}
-
-// NewFeeManager creates a new FeeManager with given fee models
-func NewFeeManager(defaultFeeModel FeeModel) *FeeManager {
-	return &FeeManager{
-		feeModels:      make(map[string]FeeModel),
-		defaultFeeModel: defaultFeeModel,
+// NewZeroFeePolicy initializes a new ZeroFeePolicy instance
+func NewZeroFeePolicy(sustainability, microtransactions bool, microThreshold int) *ZeroFeePolicy {
+	return &ZeroFeePolicy{
+		SustainabilityTransactions: sustainability,
+		Microtransactions:          microtransactions,
+		MicrotransactionThreshold:  microThreshold,
+		ActivePolicies:             make(map[string]bool),
 	}
 }
 
-// RegisterFeeModel registers a new fee model with a name
-func (fm *FeeManager) RegisterFeeModel(name string, model FeeModel) {
-	fm.mu.Lock()
-	defer fm.mu.Unlock()
-	fm.feeModels[name] = model
+// UpdatePolicy updates the zero-fee transaction policy settings
+func (zfp *ZeroFeePolicy) UpdatePolicy(sustainability, microtransactions bool, microThreshold int) {
+	zfp.SustainabilityTransactions = sustainability
+	zfp.Microtransactions = microtransactions
+	zfp.MicrotransactionThreshold = microThreshold
+	zfp.LastUpdated = time.Now()
+	zfp.updateActivePolicies()
 }
 
-// CalculateFee calculates the fee using the appropriate model
-func (fm *FeeManager) CalculateFee(modelName string, transactionSize int, operationType string, networkCongestion int) (int, error) {
-	fm.mu.Lock()
-	defer fm.mu.Unlock()
-
-	model, exists := fm.feeModels[modelName]
-	if !exists {
-		model = fm.defaultFeeModel
-	}
-
-	return model.CalculateFee(transactionSize, operationType, networkCongestion)
+// updateActivePolicies updates the map of active policies based on current settings
+func (zfp *ZeroFeePolicy) updateActivePolicies() {
+	zfp.ActivePolicies["sustainability"] = zfp.SustainabilityTransactions
+	zfp.ActivePolicies["microtransactions"] = zfp.Microtransactions
 }
 
-// DistributeFees distributes the fees using the appropriate model
-func (fm *FeeManager) DistributeFees(modelName string, totalFee int) error {
-	fm.mu.Lock()
-	defer fm.mu.Unlock()
-
-	model, exists := fm.feeModels[modelName]
-	if !exists {
-		model = fm.defaultFeeModel
-	}
-
-	return model.DistributeFees(totalFee)
-}
-
-func main() {
-	// Example usage
-	defaultModel := NewVariableFeeModel(10, 2, 1, map[string]int{
-		"transfer": 5,
-		"stake":    10,
-	})
-	zeroFeeModel := NewZeroFeeModel(100, []string{"transfer", "vote"})
-
-	fm := NewFeeManager(defaultModel)
-	fm.RegisterFeeModel("zeroFee", zeroFeeModel)
-
-	// Calculate and distribute fees
-	fee, err := fm.CalculateFee("zeroFee", 50, "transfer", 5)
-	if err != nil {
-		println("Error:", err.Error())
-	} else {
-		println("Calculated Fee:", fee)
-		err = fm.DistributeFees("zeroFee", fee)
-		if err != nil {
-			println("Error distributing fees:", err.Error())
+// IsZeroFeeTransaction determines if a transaction is eligible for zero-fee based on current policies
+func (zfp *ZeroFeePolicy) IsZeroFeeTransaction(transactionType string, transactionValue int) (bool, error) {
+	switch transactionType {
+	case "sustainability":
+		if zfp.SustainabilityTransactions {
+			return true, nil
 		}
+	case "microtransaction":
+		if zfp.Microtransactions && transactionValue <= zfp.MicrotransactionThreshold {
+			return true, nil
+		}
+	default:
+		return false, errors.New("transaction type not recognized")
 	}
+	return false, nil
+}
+
+// ValidateTransactionType validates if the given transaction type is eligible for zero-fee
+func (zfp *ZeroFeePolicy) ValidateTransactionType(transactionType string) bool {
+	_, exists := zfp.ActivePolicies[transactionType]
+	return exists
+}
+
+// ImplementZeroFeePolicy dynamically applies zero-fee policies based on predefined conditions
+func (zfp *ZeroFeePolicy) ImplementZeroFeePolicy(policy string) error {
+	switch policy {
+	case "sustainability":
+		zfp.SustainabilityTransactions = true
+	case "microtransactions":
+		zfp.Microtransactions = true
+	default:
+		return errors.New("policy not recognized")
+	}
+	zfp.updateActivePolicies()
+	return nil
+}
+
+// AuditZeroFeePolicies provides an audit log of active zero-fee policies
+func (zfp *ZeroFeePolicy) AuditZeroFeePolicies() map[string]bool {
+	return zfp.ActivePolicies
+}
+
+// GetLastUpdated returns the last time the zero-fee policies were updated
+func (zfp *ZeroFeePolicy) GetLastUpdated() time.Time {
+	return zfp.LastUpdated
+}
+
+// SecurityEnhancements provides additional security features for zero-fee transaction policies
+func (zfp *ZeroFeePolicy) SecurityEnhancements() {
+	// Implement additional security measures here
+	// For example, logging policy changes, monitoring suspicious transactions, etc.
+}
+
+// EncryptDecryptUtility represents utility functions for encrypting and decrypting data
+type EncryptDecryptUtility struct{}
+
+// EncryptData encrypts the given data using Argon2 and AES
+func (edu *EncryptDecryptUtility) EncryptData(data string, key string) (string, error) {
+	// Implement encryption logic here using Argon2 and AES
+	return "", nil
+}
+
+// DecryptData decrypts the given data using Argon2 and AES
+func (edu *EncryptDecryptUtility) DecryptData(data string, key string) (string, error) {
+	// Implement decryption logic here using Argon2 and AES
+	return "", nil
+}
+
+// TransactionImportanceMetrics represents the structure for calculating transaction importance
+type TransactionImportanceMetrics struct {
+	TransactionValue int
+	PriorityScore    int
+	TransactionSize  int
+}
+
+// NewTransactionImportanceMetrics initializes a new TransactionImportanceMetrics instance
+func NewTransactionImportanceMetrics(value, priority, size int) *TransactionImportanceMetrics {
+	return &TransactionImportanceMetrics{
+		TransactionValue: value,
+		PriorityScore:    priority,
+		TransactionSize:  size,
+	}
+}
+
+// CalculateImportance calculates the importance of a transaction
+func (tim *TransactionImportanceMetrics) CalculateImportance() float64 {
+	return float64(tim.TransactionValue+tim.PriorityScore) / float64(tim.TransactionSize)
+}
+
+// NetworkCongestionAlgorithms represents the structure for managing network congestion
+type NetworkCongestionAlgorithms struct {
+	TotalTransactionVolume int
+	NumberOfActiveNodes    int
+}
+
+// NewNetworkCongestionAlgorithms initializes a new NetworkCongestionAlgorithms instance
+func NewNetworkCongestionAlgorithms(totalVolume, activeNodes int) *NetworkCongestionAlgorithms {
+	return &NetworkCongestionAlgorithms{
+		TotalTransactionVolume: totalVolume,
+		NumberOfActiveNodes:    activeNodes,
+	}
+}
+
+// ManageCongestion calculates the congestion management adjustment
+func (nca *NetworkCongestionAlgorithms) ManageCongestion() float64 {
+	return float64(nca.TotalTransactionVolume) / float64(nca.NumberOfActiveNodes)
+}
+
+// ParticipantStakeModels represents the structure for stake-based allocation
+type ParticipantStakeModels struct {
+	ParticipantStake int
+	TotalResources   int
+	TotalStake       int
+}
+
+// NewParticipantStakeModels initializes a new ParticipantStakeModels instance
+func NewParticipantStakeModels(participantStake, totalResources, totalStake int) *ParticipantStakeModels {
+	return &ParticipantStakeModels{
+		ParticipantStake: participantStake,
+		TotalResources:   totalResources,
+		TotalStake:       totalStake,
+	}
+}
+
+// CalculateStakeAllocation calculates the allocation based on participant's stake
+func (psm *ParticipantStakeModels) CalculateStakeAllocation() float64 {
+	return float64(psm.ParticipantStake) * float64(psm.TotalResources) / float64(psm.TotalStake)
 }

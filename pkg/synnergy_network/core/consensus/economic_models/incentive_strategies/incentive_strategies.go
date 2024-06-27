@@ -1,246 +1,152 @@
 package incentive_strategies
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"math/big"
 	"sync"
-	"time"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/crypto"
-	"github.com/synthron_blockchain_final/pkg/layer0/economic_models/incentive_strategies/token_rewards"
-	"github.com/synthron_blockchain_final/pkg/layer0/economic_models/incentive_strategies/behavioural_incentives"
-	"github.com/synthron_blockchain_final/pkg/layer0/economic_models/incentive_strategies/dynamic_incentives"
 )
 
-// RewardType defines the type of reward
-type RewardType string
+// Constants for incentive calculations
+const (
+	BaseBehavioralReward = 20.0
+	BaseDynamicReward    = 30.0
+)
+
+// IncentiveType defines different types of incentives
+type IncentiveType int
 
 const (
-	MiningReward    RewardType = "mining"
-	StakingReward   RewardType = "staking"
-	GovernanceReward RewardType = "governance"
+	Behavioral IncentiveType = iota
+	Dynamic
 )
 
-// Reward defines the structure of a token reward
-type Reward struct {
-	Type       RewardType
-	Amount     *big.Int
-	Recipient  string
-	IssuedAt   time.Time
-	ExpiresAt  time.Time
+// NetworkPerformance holds network performance metrics
+type NetworkPerformance struct {
+	Score  float64
+	MaxScore float64
 }
 
-// TokenDistributionManager manages the distribution of token rewards
-type TokenDistributionManager struct {
-	rewards map[string][]*Reward
-	mu      sync.Mutex
+// User represents a participant in the network
+type User struct {
+	ID                string
+	ContributionScore float64
+	Stake             float64
 }
 
-// NewTokenDistributionManager initializes a new TokenDistributionManager
-func NewTokenDistributionManager() *TokenDistributionManager {
-	return &TokenDistributionManager{
-		rewards: make(map[string][]*Reward),
+// IncentiveSystem represents the incentive distribution system
+type IncentiveSystem struct {
+	mu                 sync.Mutex
+	Users              map[string]*User
+	TotalContribution  float64
+	NetworkPerformance NetworkPerformance
+}
+
+// NewIncentiveSystem creates a new IncentiveSystem instance
+func NewIncentiveSystem(maxNetworkScore float64) *IncentiveSystem {
+	return &IncentiveSystem{
+		Users: make(map[string]*User),
+		NetworkPerformance: NetworkPerformance{
+			Score: 0,
+			MaxScore: maxNetworkScore,
+		},
 	}
 }
 
-// IssueReward issues a new token reward to a user
-func (tdm *TokenDistributionManager) IssueReward(recipient string, rewardType RewardType, amount *big.Int, duration time.Duration) (*Reward, error) {
-	if amount.Cmp(big.NewInt(0)) <= 0 {
-		return nil, errors.New("reward amount must be positive")
+// AddUser adds a new user to the incentive system
+func (is *IncentiveSystem) AddUser(id string, contributionScore, stake float64) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	is.Users[id] = &User{
+		ID:                id,
+		ContributionScore: contributionScore,
+		Stake:             stake,
 	}
-
-	reward := &Reward{
-		Type:      rewardType,
-		Amount:    amount,
-		Recipient: recipient,
-		IssuedAt:  time.Now(),
-		ExpiresAt: time.Now().Add(duration),
-	}
-
-	tdm.mu.Lock()
-	defer tdm.mu.Unlock()
-	tdm.rewards[recipient] = append(tdm.rewards[recipient], reward)
-
-	fmt.Printf("Issued %s reward to user %s with amount %s\n", rewardType, recipient, amount.String())
-	return reward, nil
+	is.TotalContribution += contributionScore
 }
 
-// RedeemReward redeems a token reward for a user
-func (tdm *TokenDistributionManager) RedeemReward(recipient string, rewardType RewardType) (*Reward, error) {
-	tdm.mu.Lock()
-	defer tdm.mu.Unlock()
+// CalculateBehavioralIncentive calculates the behavioral incentive for a user
+func (is *IncentiveSystem) CalculateBehavioralIncentive(user *User) float64 {
+	return BaseBehavioralReward * (1 + (user.ContributionScore / is.MaxContributionScore()))
+}
 
-	userRewards, exists := tdm.rewards[recipient]
-	if !exists || len(userRewards) == 0 {
-		return nil, fmt.Errorf("no rewards found for user %s", recipient)
-	}
+// CalculateDynamicIncentive calculates the dynamic incentive for a user based on network performance
+func (is *IncentiveSystem) CalculateDynamicIncentive(user *User) float64 {
+	return BaseDynamicReward * (1 + (is.NetworkPerformance.Score / is.NetworkPerformance.MaxScore))
+}
 
-	var redeemedReward *Reward
-	for i, reward := range userRewards {
-		if reward.Type == rewardType && time.Now().Before(reward.ExpiresAt) {
-			redeemedReward = reward
-			// Remove redeemed reward
-			tdm.rewards[recipient] = append(userRewards[:i], userRewards[i+1:]...)
-			break
+// DistributeIncentives distributes incentives to all users based on their contributions and network performance
+func (is *IncentiveSystem) DistributeIncentives(incentiveType IncentiveType) (map[string]float64, error) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	incentives := make(map[string]float64)
+	for id, user := range is.Users {
+		switch incentiveType {
+		case Behavioral:
+			incentives[id] = is.CalculateBehavioralIncentive(user)
+		case Dynamic:
+			incentives[id] = is.CalculateDynamicIncentive(user)
+		default:
+			return nil, errors.New("invalid incentive type")
 		}
 	}
-
-	if redeemedReward == nil {
-		return nil, fmt.Errorf("no valid reward of type %s found for user %s", rewardType, recipient)
-	}
-
-	fmt.Printf("Redeemed %s reward for user %s with amount %s\n", rewardType, recipient, redeemedReward.Amount.String())
-	return redeemedReward, nil
+	return incentives, nil
 }
 
-// GetRewards lists all rewards for a user
-func (tdm *TokenDistributionManager) GetRewards(recipient string) ([]*Reward, error) {
-	tdm.mu.Lock()
-	defer tdm.mu.Unlock()
+// MaxContributionScore calculates the maximum contribution score among all users
+func (is *IncentiveSystem) MaxContributionScore() float64 {
+	maxScore := 0.0
+	for _, user := range is.Users {
+		if user.ContributionScore > maxScore {
+			maxScore = user.ContributionScore
+		}
+	}
+	return maxScore
+}
 
-	userRewards, exists := tdm.rewards[recipient]
+// AdjustContributionScore adjusts the contribution score of a user
+func (is *IncentiveSystem) AdjustContributionScore(userID string, adjustment float64) error {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
 	if !exists {
-		return nil, fmt.Errorf("no rewards found for user %s", recipient)
+		return errors.New("user not found")
 	}
-
-	return userRewards, nil
+	user.ContributionScore += adjustment
+	if user.ContributionScore < 0 {
+		user.ContributionScore = 0
+	}
+	is.TotalContribution += adjustment
+	return nil
 }
 
-// CleanExpiredRewards removes expired rewards from the system
-func (tdm *TokenDistributionManager) CleanExpiredRewards() {
-	tdm.mu.Lock()
-	defer tdm.mu.Unlock()
-
-	for recipient, rewards := range tdm.rewards {
-		var validRewards []*Reward
-		for _, reward := range rewards {
-			if time.Now().Before(reward.ExpiresAt) {
-				validRewards = append(validRewards, reward)
-			} else {
-				fmt.Printf("Removed expired reward of type %s for user %s with amount %s\n", reward.Type, recipient, reward.Amount.String())
-			}
-		}
-		tdm.rewards[recipient] = validRewards
+// GetUserContributionScore gets the contribution score of a user
+func (is *IncentiveSystem) GetUserContributionScore(userID string) (float64, error) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
+	if !exists {
+		return 0, errors.New("user not found")
 	}
+	return user.ContributionScore, nil
 }
 
-// EncryptReward encrypts a reward using AES encryption
-func (tdm *TokenDistributionManager) EncryptReward(reward *Reward, passphrase string) ([]byte, error) {
-	rewardBytes, err := json.Marshal(reward)
-	if err != nil {
-		return nil, err
+// ListUsers returns a list of all users in the incentive system
+func (is *IncentiveSystem) ListUsers() []*User {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	users := []*User{}
+	for _, user := range is.Users {
+		users = append(users, user)
 	}
-	encryptedReward, err := crypto.EncryptAES(rewardBytes, passphrase)
-	if err != nil {
-		return nil, err
-	}
-	return encryptedReward, nil
+	return users
 }
 
-// DecryptReward decrypts a reward using AES encryption
-func (tdm *TokenDistributionManager) DecryptReward(encryptedReward []byte, passphrase string) (*Reward, error) {
-	decryptedBytes, err := crypto.DecryptAES(encryptedReward, passphrase)
-	if err != nil {
-		return nil, err
+// UpdateNetworkPerformance updates the network performance metrics
+func (is *IncentiveSystem) UpdateNetworkPerformance(score float64) error {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	if score < 0 || score > is.NetworkPerformance.MaxScore {
+		return errors.New("invalid network performance score")
 	}
-	var reward Reward
-	err = json.Unmarshal(decryptedBytes, &reward)
-	if err != nil {
-		return nil, err
-	}
-	return &reward, nil
-}
-
-// AdaptiveRewardAdjustment adjusts rewards based on network parameters
-func (tdm *TokenDistributionManager) AdaptiveRewardAdjustment() {
-	// Example implementation: adjust rewards based on dummy network load
-	networkLoad := getNetworkLoad()
-	var adjustmentFactor *big.Int
-
-	if networkLoad > 75 {
-		adjustmentFactor = big.NewInt(2)
-	} else if networkLoad > 50 {
-		adjustmentFactor = big.NewInt(1)
-	} else {
-		adjustmentFactor = big.NewInt(1).Div(big.NewInt(1), big.NewInt(2)) // 0.5
-	}
-
-	tdm.mu.Lock()
-	defer tdm.mu.Unlock()
-	for recipient, rewards := range tdm.rewards {
-		for _, reward := range rewards {
-			newAmount := new(big.Int).Mul(reward.Amount, adjustmentFactor)
-			reward.Amount = newAmount
-			fmt.Printf("Adjusted reward for user %s to new amount %s\n", recipient, newAmount.String())
-		}
-	}
-}
-
-// getNetworkLoad is a placeholder for actual network load calculation
-func getNetworkLoad() int {
-	// Placeholder: return a dummy network load value between 0 and 100
-	randInt, _ := rand.Int(rand.Reader, big.NewInt(100))
-	return int(randInt.Int64())
-}
-
-// Example use case
-func main() {
-	tdm := NewTokenDistributionManager()
-	amount := big.NewInt(1000)
-
-	// Issue a reward
-	reward, err := tdm.IssueReward("user1", MiningReward, amount, 7*24*time.Hour) // 7 days expiry
-	if err != nil {
-		fmt.Println("Error issuing reward:", err)
-		return
-	}
-
-	fmt.Println("Issued reward:", reward)
-
-	// Encrypt the reward
-	passphrase := "securepassphrase"
-	encryptedReward, err := tdm.EncryptReward(reward, passphrase)
-	if err != nil {
-		fmt.Println("Error encrypting reward:", err)
-		return
-	}
-
-	fmt.Println("Encrypted reward:", encryptedReward)
-
-	// Decrypt the reward
-	decryptedReward, err := tdm.DecryptReward(encryptedReward, passphrase)
-	if err != nil {
-		fmt.Println("Error decrypting reward:", err)
-		return
-	}
-
-	fmt.Println("Decrypted reward:", decryptedReward)
-
-	// Redeem a reward
-	redeemedReward, err := tdm.RedeemReward("user1", MiningReward)
-	if err != nil {
-		fmt.Println("Error redeeming reward:", err)
-		return
-	}
-
-	fmt.Println("Redeemed reward:", redeemedReward)
-
-	// List rewards for a user
-	rewards, err := tdm.GetRewards("user1")
-	if err != nil {
-		fmt.Println("Error listing rewards:", err)
-		return
-	}
-
-	fmt.Println("Rewards for user1:", rewards)
-
-	// Clean expired rewards
-	tdm.CleanExpiredRewards()
-
-	// Adjust rewards based on network conditions
-	tdm.AdaptiveRewardAdjustment()
+	is.NetworkPerformance.Score = score
+	return nil
 }

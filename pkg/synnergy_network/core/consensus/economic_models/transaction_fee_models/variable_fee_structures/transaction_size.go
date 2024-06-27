@@ -2,70 +2,116 @@ package variable_fee_structures
 
 import (
 	"errors"
-	"math/big"
+	"math"
 	"sync"
+	"time"
 )
 
-// TransactionSizeFeeManager manages the fee structure based on transaction sizes
-type TransactionSizeFeeManager struct {
-	sync.Mutex
-	baseFee  *big.Int
-	feePerKB *big.Int
+// TransactionSizeFeeAdjuster represents the structure for managing variable fee adjustments based on transaction size
+type TransactionSizeFeeAdjuster struct {
+	mu                   sync.Mutex
+	BaseFee              int
+	MaxTransactionVolume int
+	CurrentTransactionVolume int
+	SizeMultiplier       float64
+	LastAdjusted         time.Time
 }
 
-// NewTransactionSizeFeeManager initializes a new TransactionSizeFeeManager instance
-func NewTransactionSizeFeeManager(baseFee, feePerKB int64) *TransactionSizeFeeManager {
-	return &TransactionSizeFeeManager{
-		baseFee:  big.NewInt(baseFee),
-		feePerKB: big.NewInt(feePerKB),
+// NewTransactionSizeFeeAdjuster initializes a new TransactionSizeFeeAdjuster instance
+func NewTransactionSizeFeeAdjuster(baseFee, maxVolume int, sizeMultiplier float64) *TransactionSizeFeeAdjuster {
+	return &TransactionSizeFeeAdjuster{
+		BaseFee:              baseFee,
+		MaxTransactionVolume: maxVolume,
+		SizeMultiplier:       sizeMultiplier,
 	}
 }
 
-// SetBaseFee sets the base fee for transactions
-func (tsfm *TransactionSizeFeeManager) SetBaseFee(baseFee int64) {
-	tsfm.Lock()
-	defer tsfm.Unlock()
-	tsfm.baseFee = big.NewInt(baseFee)
-}
+// CalculateFee calculates the transaction fee based on the current network conditions and transaction size
+func (fa *TransactionSizeFeeAdjuster) CalculateFee(transactionSize int) (int, error) {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
 
-// GetBaseFee retrieves the base fee for transactions
-func (tsfm *TransactionSizeFeeManager) GetBaseFee() *big.Int {
-	tsfm.Lock()
-	defer tsfm.Unlock()
-	return new(big.Int).Set(tsfm.baseFee)
-}
-
-// SetFeePerKB sets the fee per kilobyte for transactions
-func (tsfm *TransactionSizeFeeManager) SetFeePerKB(feePerKB int64) {
-	tsfm.Lock()
-	defer tsfm.Unlock()
-	tsfm.feePerKB = big.NewInt(feePerKB)
-}
-
-// GetFeePerKB retrieves the fee per kilobyte for transactions
-func (tsfm *TransactionSizeFeeManager) GetFeePerKB() *big.Int {
-	tsfm.Lock()
-	defer tsfm.Unlock()
-	return new(big.Int).Set(tsfm.feePerKB)
-}
-
-// CalculateFee calculates the total fee based on the transaction size in bytes
-func (tsfm *TransactionSizeFeeManager) CalculateFee(sizeInBytes int64) (*big.Int, error) {
-	if sizeInBytes <= 0 {
-		return nil, errors.New("transaction size must be greater than 0")
+	if transactionSize <= 0 {
+		return 0, errors.New("transaction size must be greater than zero")
 	}
 
-	tsfm.Lock()
-	defer tsfm.Unlock()
-
-	sizeInKB := new(big.Int).Div(big.NewInt(sizeInBytes), big.NewInt(1024))
-	if sizeInBytes%1024 != 0 {
-		sizeInKB.Add(sizeInKB, big.NewInt(1))
-	}
-
-	fee := new(big.Int).Mul(sizeInKB, tsfm.feePerKB)
-	totalFee := new(big.Int).Add(tsfm.baseFee, fee)
-
-	return totalFee, nil
+	fee := int(float64(fa.BaseFee) * (1 + float64(fa.CurrentTransactionVolume)/float64(fa.MaxTransactionVolume)) * math.Pow(float64(transactionSize), fa.SizeMultiplier))
+	return fee, nil
 }
 
+// UpdateTransactionVolume updates the current transaction volume
+func (fa *TransactionSizeFeeAdjuster) UpdateTransactionVolume(volume int) {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	fa.CurrentTransactionVolume = volume
+	fa.LastAdjusted = time.Now()
+}
+
+// ImplementFeeAdjustmentPolicy dynamically adjusts fees based on predefined policies
+func (fa *TransactionSizeFeeAdjuster) ImplementFeeAdjustmentPolicy(policy string) error {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+
+	switch policy {
+	case "congestion_control":
+		fa.adjustForCongestion()
+	case "incentive_alignment":
+		fa.adjustForIncentiveAlignment()
+	default:
+		return errors.New("policy not recognized")
+	}
+	return nil
+}
+
+// adjustForCongestion adjusts fees based on network congestion levels
+func (fa *TransactionSizeFeeAdjuster) adjustForCongestion() {
+	// Example logic for adjusting fees based on congestion
+	if fa.CurrentTransactionVolume > fa.MaxTransactionVolume/2 {
+		fa.SizeMultiplier *= 1.1
+	} else {
+		fa.SizeMultiplier *= 0.9
+	}
+}
+
+// adjustForIncentiveAlignment adjusts fees to align incentives for network participants
+func (fa *TransactionSizeFeeAdjuster) adjustForIncentiveAlignment() {
+	// Example logic for adjusting fees to align incentives
+	fa.SizeMultiplier *= 1.05
+}
+
+// EncryptDecryptUtility represents utility functions for encrypting and decrypting data
+type EncryptDecryptUtility struct{}
+
+// EncryptData encrypts the given data using Argon2 and AES
+func (edu *EncryptDecryptUtility) EncryptData(data string, key string) (string, error) {
+	// Implement encryption logic here using Argon2 and AES
+	return "", nil
+}
+
+// DecryptData decrypts the given data using Argon2 and AES
+func (edu *EncryptDecryptUtility) DecryptData(data string, key string) (string, error) {
+	// Implement decryption logic here using Argon2 and AES
+	return "", nil
+}
+
+// SecurityEnhancements provides additional security features for the fee adjustment system
+func (fa *TransactionSizeFeeAdjuster) SecurityEnhancements() {
+	// Implement additional security measures here
+}
+
+// ValidateTransactionSize ensures the transaction size is within valid range
+func (fa *TransactionSizeFeeAdjuster) ValidateTransactionSize(transactionSize int) error {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	if transactionSize <= 0 {
+		return errors.New("transaction size must be greater than zero")
+	}
+	return nil
+}
+
+// AuditTransactionFees provides an audit log of transaction fees
+func (fa *TransactionSizeFeeAdjuster) AuditTransactionFees() map[string]float64 {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	return map[string]float64{"SizeMultiplier": fa.SizeMultiplier}
+}

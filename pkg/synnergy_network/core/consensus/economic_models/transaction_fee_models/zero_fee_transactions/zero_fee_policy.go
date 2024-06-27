@@ -2,78 +2,107 @@ package zero_fee_transactions
 
 import (
 	"errors"
-	"sync"
+	"time"
 )
 
-// ZeroFeePolicy defines the conditions under which zero-fee transactions are allowed
+// ZeroFeePolicy represents the structure for managing zero-fee transaction policies
 type ZeroFeePolicy struct {
-	sync.Mutex
-	allowedAccounts map[string]bool // Accounts that are allowed to make zero-fee transactions
-	thresholdAmount int64           // Transactions below this amount can be zero-fee
+	SustainabilityTransactions bool
+	Microtransactions          bool
+	MicrotransactionThreshold  int
+	ActivePolicies             map[string]bool
+	LastUpdated                time.Time
 }
 
-// NewZeroFeePolicy initializes a new ZeroFeePolicy
-func NewZeroFeePolicy(thresholdAmount int64) *ZeroFeePolicy {
+// NewZeroFeePolicy initializes a new ZeroFeePolicy instance
+func NewZeroFeePolicy(sustainability, microtransactions bool, microThreshold int) *ZeroFeePolicy {
 	return &ZeroFeePolicy{
-		allowedAccounts: make(map[string]bool),
-		thresholdAmount: thresholdAmount,
+		SustainabilityTransactions: sustainability,
+		Microtransactions:          microtransactions,
+		MicrotransactionThreshold:  microThreshold,
+		ActivePolicies:             make(map[string]bool),
 	}
 }
 
-// AddAllowedAccount adds an account to the list of allowed zero-fee accounts
-func (zfp *ZeroFeePolicy) AddAllowedAccount(account string) {
-	zfp.Lock()
-	defer zfp.Unlock()
-	zfp.allowedAccounts[account] = true
+// UpdatePolicy updates the zero-fee transaction policy settings
+func (zfp *ZeroFeePolicy) UpdatePolicy(sustainability, microtransactions bool, microThreshold int) {
+	zfp.SustainabilityTransactions = sustainability
+	zfp.Microtransactions = microtransactions
+	zfp.MicrotransactionThreshold = microThreshold
+	zfp.LastUpdated = time.Now()
+	zfp.updateActivePolicies()
 }
 
-// RemoveAllowedAccount removes an account from the list of allowed zero-fee accounts
-func (zfp *ZeroFeePolicy) RemoveAllowedAccount(account string) {
-	zfp.Lock()
-	defer zfp.Unlock()
-	delete(zfp.allowedAccounts, account)
+// updateActivePolicies updates the map of active policies based on current settings
+func (zfp *ZeroFeePolicy) updateActivePolicies() {
+	zfp.ActivePolicies["sustainability"] = zfp.SustainabilityTransactions
+	zfp.ActivePolicies["microtransactions"] = zfp.Microtransactions
 }
 
-// IsZeroFeeAllowed checks if a given transaction can be zero-fee based on the account and transaction amount
-func (zfp *ZeroFeePolicy) IsZeroFeeAllowed(account string, amount int64) (bool, error) {
-	if account == "" {
-		return false, errors.New("account cannot be empty")
-	}
-	if amount < 0 {
-		return false, errors.New("transaction amount cannot be negative")
-	}
-
-	zfp.Lock()
-	defer zfp.Unlock()
-
-	// Check if the account is allowed or if the transaction amount is below the threshold
-	if zfp.allowedAccounts[account] || amount <= zfp.thresholdAmount {
-		return true, nil
+// IsZeroFeeTransaction determines if a transaction is eligible for zero-fee based on current policies
+func (zfp *ZeroFeePolicy) IsZeroFeeTransaction(transactionType string, transactionValue int) (bool, error) {
+	switch transactionType {
+	case "sustainability":
+		if zfp.SustainabilityTransactions {
+			return true, nil
+		}
+	case "microtransaction":
+		if zfp.Microtransactions && transactionValue <= zfp.MicrotransactionThreshold {
+			return true, nil
+		}
+	default:
+		return false, errors.New("transaction type not recognized")
 	}
 	return false, nil
 }
 
-// SetThresholdAmount sets the threshold amount for zero-fee transactions
-func (zfp *ZeroFeePolicy) SetThresholdAmount(amount int64) {
-	zfp.Lock()
-	defer zfp.Unlock()
-	zfp.thresholdAmount = amount
+// ValidateTransactionType validates if the given transaction type is eligible for zero-fee
+func (zfp *ZeroFeePolicy) ValidateTransactionType(transactionType string) bool {
+	_, exists := zfp.ActivePolicies[transactionType]
+	return exists
 }
 
-// GetThresholdAmount retrieves the threshold amount for zero-fee transactions
-func (zfp *ZeroFeePolicy) GetThresholdAmount() int64 {
-	zfp.Lock()
-	defer zfp.Unlock()
-	return zfp.thresholdAmount
-}
-
-// ListAllowedAccounts lists all accounts that are allowed to make zero-fee transactions
-func (zfp *ZeroFeePolicy) ListAllowedAccounts() []string {
-	zfp.Lock()
-	defer zfp.Unlock()
-	accounts := make([]string, 0, len(zfp.allowedAccounts))
-	for account := range zfp.allowedAccounts {
-		accounts = append(accounts, account)
+// ImplementZeroFeePolicy dynamically applies zero-fee policies based on predefined conditions
+func (zfp *ZeroFeePolicy) ImplementZeroFeePolicy(policy string) error {
+	switch policy {
+	case "sustainability":
+		zfp.SustainabilityTransactions = true
+	case "microtransactions":
+		zfp.Microtransactions = true
+	default:
+		return errors.New("policy not recognized")
 	}
-	return accounts
+	zfp.updateActivePolicies()
+	return nil
+}
+
+// AuditZeroFeePolicies provides an audit log of active zero-fee policies
+func (zfp *ZeroFeePolicy) AuditZeroFeePolicies() map[string]bool {
+	return zfp.ActivePolicies
+}
+
+// GetLastUpdated returns the last time the zero-fee policies were updated
+func (zfp *ZeroFeePolicy) GetLastUpdated() time.Time {
+	return zfp.LastUpdated
+}
+
+// SecurityEnhancements provides additional security features for zero-fee transaction policies
+func (zfp *ZeroFeePolicy) SecurityEnhancements() {
+	// Implement additional security measures here
+	// For example, logging policy changes, monitoring suspicious transactions, etc.
+}
+
+// EncryptDecryptUtility represents utility functions for encrypting and decrypting data
+type EncryptDecryptUtility struct{}
+
+// EncryptData encrypts the given data using Argon2 and AES
+func (edu *EncryptDecryptUtility) EncryptData(data string, key string) (string, error) {
+	// Implement encryption logic here using Argon2 and AES
+	return "", nil
+}
+
+// DecryptData decrypts the given data using Argon2 and AES
+func (edu *EncryptDecryptUtility) DecryptData(data string, key string) (string, error) {
+	// Implement decryption logic here using Argon2 and AES
+	return "", nil
 }

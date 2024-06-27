@@ -1,138 +1,129 @@
-package proof_of_work
+package consensus
 
 import (
 	"crypto/rand"
-	"encoding/binary"
+	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"sync"
-	"time"
-
+	"fmt"
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/scrypt"
+	"math/big"
+	"time"
+	"synthron-blockchain/pkg/synnergy_network/core/common"
 )
 
-// MiningAlgorithm encapsulates the proof of work process and advanced parameters.
-type MiningAlgorithm struct {
-	blockReward          float64
-	rewardHalvingInterval int
-	maxHalvings          int
-	difficulty           uint32
-	adjustmentInterval   int
-	mutex                sync.RWMutex
-	// New fields to optimize and secure mining operations
-	lastBlockTime       time.Time
-	averageBlockTime    time.Duration
-	minerConvergence    []float64
-	hashRateAdjustments []time.Duration
+type MinerConfig struct {
+	Memory      uint32
+	Iterations  uint32
+	Parallelism uint8
+	SaltLength  uint32
+	KeyLength   uint32
+	Algorithm   string
 }
 
-// NewMiningAlgorithm initializes the mining algorithm with default parameters.
-func NewMiningAlgorithm() *MiningAlgorithm {
-	return &MiningAlgorithm{
-		blockReward:          1252,
-		rewardHalvingInterval: 200000,
-		maxHalvings:          64,
-		difficulty:           1,
-		adjustmentInterval:   2016,
-		lastBlockTime:        time.Now(),
-		averageBlockTime:     10 * time.Minute,
-		minerConvergence:     make([]float64, 0),
-		hashRateAdjustments:  make([]time.Duration, 0),
+func DefaultMinerConfig() *MinerConfig {
+	return &MinerConfig{
+		Memory:      64 * 1024, // 64 MB
+		Iterations:  3,
+		Parallelism: 2,
+		SaltLength:  16,
+		KeyLength:   32,
+		Algorithm:   "argon2", // Default algorithm
 	}
 }
 
-// CalculateHash computes a hash using Argon2, incorporating a dynamic salt for added security.
-func (m *MiningAlgorithm) CalculateHash(data string, nonce uint64) string {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
-	// Dynamic salt generation using current time to prevent rainbow table attacks
-	timeSalt := make([]byte, 8)
-	binary.LittleEndian.PutUint64(timeSalt, uint64(time.Now().UnixNano()))
-	seed := data + string(timeSalt) + strconv.FormatUint(nonce, 10)
-
-	hash := argon2.IDKey([]byte(seed), timeSalt, 1, 64*1024, 4, 32)
-	return hex.EncodeToString(hash)
+func GenerateSalt(length uint32) ([]byte, error) {
+	salt := make([]byte, length)
+	_, err := rand.Read(salt)
+	return salt, err
 }
 
-// MineBlock performs the mining operation by finding the correct nonce, adjusting for dynamic difficulty.
-func (m *MiningAlgorithm) MineBlock(data string, target string) (uint64, string, error) {
-	var nonce uint64 = 0
-	for {
-		hash := m.CalculateHash(data, nonce)
-		if strings.HasPrefix(hash, target) {
-			m.recordBlockTime()
-			return nonce, hash, nil
+func CalculateHash(block *common.Block, config *MinerConfig) (string, error) {
+	salt, err := GenerateSalt(config.SaltLength)
+	if err != nil {
+		return "", err
+	}
+
+	data := blockData(block)
+
+	var hash []byte
+	switch config.Algorithm {
+	case "argon2":
+		hash = argon2.IDKey(data, salt, config.Iterations, config.Memory, config.Parallelism, config.KeyLength)
+	case "scrypt":
+		hash, _ = scrypt.Key(data, salt, int(config.Iterations), int(config.Memory), int(config.Parallelism), int(config.KeyLength))
+	case "sha256":
+		hasher := sha256.New()
+		hasher.Write(data)
+		hash = hasher.Sum(nil)
+	default:
+		return "", fmt.Errorf("unsupported hashing algorithm")
+	}
+
+	return hex.EncodeToString(hash), nil
+}
+
+func blockData(block *common.Block) []byte {
+	blockInfo := fmt.Sprintf("%d%s%d", block.Timestamp, block.PrevBlockHash, block.Nonce)
+	return []byte(blockInfo + concatTransactions(block.Transactions))
+}
+
+func concatTransactions(transactions []*common.Transaction) string {
+	result := ""
+	for _, tx := range transactions {
+		result += tx.Signature // Simplified
+	}
+	return result
+}
+
+func ValidateBlock(block *common.Block, config *MinerConfig) (bool, error) {
+	hash, err := CalculateHash(block, config)
+	if err != nil {
+		return false, err
+	}
+
+	return isHashValid(hash, block.Nonce), nil
+}
+
+func isHashValid(hash string, difficulty int) bool {
+	target := big.NewInt(1)
+	target.Lsh(target, uint(256-difficulty))
+
+	hexHash, _ := hex.DecodeString(hash)
+	hashInt := new(big.Int).SetBytes(hexHash)
+
+	return hashInt.Cmp(target) == -1
+}
+
+func MineBlock(transactions []*common.Transaction, prevHash string, config *MinerConfig, difficulty int) (*common.Block, error) {
+	block := &common.Block{
+		Timestamp:    time.Now().Unix(),
+		Transactions: transactions,
+		PrevBlockHash: prevHash,
+		Difficulty:   difficulty,
+	}
+
+	NonceLimit := uint64(1<<32) // Example nonce limit
+	for nonce := uint64(0); nonce < NonceLimit; nonce++ {
+		block.Nonce = int(nonce)
+		valid, err := ValidateBlock(block, config)
+		if err != nil {
+			return nil, err
 		}
-		nonce++
-		if nonce == ^uint64(0) { // If nonce wraps around, exit loop
-			return 0, "", errors.New("nonce overflow, mining failed")
+		if valid {
+			return block, nil
 		}
 	}
+
+	return nil, fmt.Errorf("failed to mine a new block after trying %d nonces", NonceLimit)
 }
 
-// recordBlockTime updates the timing metrics after a block is mined.
-func (m *MiningAlgorithm) recordBlockTime() {
-	now := time.Now()
-	m.mutex.Lock()
-	blockDuration := now.Sub(m.lastBlockTime)
-	m.lastBlockTime = now
-	m.averageBlockTime = (m.averageBlockTime + blockDuration) / 2
-	m.hashRateAdjustments = append(m.hashRateAdjustments, blockDuration)
-	m.mutex.Unlock()
-
-	// Post-mining difficulty adjustment based on time taken to mine the latest block
-	m.AdjustDifficulty(blockDuration, m.averageBlockTime)
-}
-
-// CalculateReward computes the block reward with halving consideration.
-func (m *MiningAlgorithm) CalculateReward(currentHeight int) float64 {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
-	halvings := currentHeight / m.rewardHalvingInterval
-	if halvings > m.maxHalvings {
-		return 0
+// Function to dynamically adjust the hashing algorithm based on system performance and energy consumption
+func (sai *SustainabilityAndIncentives) AdjustHashingAlgorithm() {
+	// Example: Adjust algorithm based on system performance metrics
+	if sai.Blockchain.IsEnergyUsageHigh() {
+		sai.Blockchain.MinerConfig.Algorithm = "scrypt" // Switch to Scrypt if energy usage is high
+	} else {
+		sai.Blockchain.MinerConfig.Algorithm = "argon2" // Default to Argon2
 	}
-	return m.blockReward / float64(uint(1)<<uint(halvings))
-}
-
-// AdjustDifficulty dynamically adjusts the mining difficulty based on block generation rate.
-func (m *MiningAlgorithm) AdjustDifficulty(actualTime, expectedTime time.Duration) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	ratio := float64(actualTime) / float64(expectedTime)
-	if ratio < 0.9 {
-		m.difficulty++
-	} else if ratio > 1.1 && m.difficulty > 1 {
-		m.difficulty--
-	}
-}
-
-// GetCurrentDifficulty provides safe access to the current difficulty.
-func (m *MiningAlgorithm) GetCurrentDifficulty() uint32 {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
-	return m.difficulty
-}
-
-// GenerateDifficultyTarget creates a mining target based on the current difficulty.
-func (m *MiningAlgorithm) GenerateDifficultyTarget() string {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
-	leadingZeros := int(m.difficulty)
-	return strings.Repeat("0", leadingZeros) + strings.Repeat("f", 64-leadingZeros)
-}
-
-// SecurityMeasures to protect the mining process and maintain blockchain integrity.
-func (m *MiningAlgorithm) SecurityMeasures() {
-	// Implement cryptographic signature verifications, consensus checks, and random audits
-}
-
-// ExtendCompatibility allows the algorithm to adapt to technological advancements.
-func (m *MiningAlgorithm) ExtendCompatibility() {
-	// Update mining parameters based on ongoing network evaluations and consensus decisions
 }

@@ -1,107 +1,97 @@
-package proof_of_stake
+package consensus
 
 import (
-	"crypto"
+	"crypto/sha256"
 	"math/big"
+	"sync"
 	"time"
-
-	"github.com/synthron/synthronchain/crypto/vrf"
-	"github.com/synthron/synthronchain/storage"
 )
 
-// Validator struct holds details about each validator
+// RewardDistributor manages the distribution of rewards to validators based on their stake and transaction processing.
+type RewardDistributor struct {
+	totalStaked      *big.Int
+	rewardPool       *big.Int
+	transactionFees  *big.Int
+	mutex            sync.Mutex
+	validators       map[string]*Validator
+	rewardAdjustment func(*big.Int, *big.Int) *big.Int
+	blockchainState  *BlockchainState
+}
+
+// BlockchainState holds the global state of the blockchain required for calculations.
+type BlockchainState struct {
+	TotalTransactions int
+}
+
+// Validator represents the structure for blockchain validators, including necessary cryptographic components.
 type Validator struct {
-	Address       string
-	Stake         *big.Int
-	LastActive    time.Time
-	IsSlashed     bool
-	StakedSince   time.Time
-	LockUpPeriod  time.Duration
+	PublicKey       string
+	Stake           *big.Int
+	Transactions    int
+	EffectiveStake  *big.Int
+	TransactionFees *big.Int
+	Reward          *big.Int
+	LastActive      time.Time
 }
 
-// PoSRewardSystem manages the reward distribution and slashing for the PoS mechanism
-type PoSRewardSystem struct {
-	Blockchain *Blockchain
-}
-
-// NewPoSRewardSystem creates a new instance of PoSRewardSystem
-func NewPoSRewardSystem(blockchain *Blockchain) *PoSRewardSystem {
-	return &PoSRewardSystem{
-		Blockchain: blockchain,
+// NewRewardDistributor creates a new instance of RewardDistributor with initial values and setups.
+func NewRewardDistributor(initialPool *big.Int, blockchainState *BlockchainState) *RewardDistributor {
+	return &RewardDistributor{
+		totalStaked:     big.NewInt(0),
+		rewardPool:      initialPool,
+		transactionFees: big.NewInt(0),
+		validators:      make(map[string]*Validator),
+		blockchainState: blockchainState,
 	}
 }
 
-// CalculateReward computes the reward for a given validator based on the stake proportion
-func (prs *PoSRewardSystem) CalculateReward(validator Validator) *big.Int {
-	totalStake := prs.Blockchain.TotalStakedTokens()
-	stakeProportion := new(big.Int).Div(validator.Stake, totalStake)
-	baseReward := new(big.Int).Div(prs.Blockchain.TotalTransactionVolume(), big.NewInt(10000)) // Example reward calculation
-	reward := new(big.Int).Mul(baseReward, stakeProportion)
-	return reward
-}
+// UpdateRewards recalculates and distributes the rewards to each validator based on multiple factors.
+func (rd *RewardDistributor) UpdateRewards() {
+	rd.mutex.Lock()
+	defer rd.mutex.Unlock()
 
-// DistributeRewards processes rewards for all validators
-func (prs *PoSRewardSystem) DistributeRewards() {
-	for _, validator := range prs.Blockchain.Validators {
-		if validator.IsSlashed {
-			continue
+	totalTransactions := big.NewInt(int64(rd.blockchainState.TotalTransactions))
+	for _, v := range rd.validators {
+		if time.Since(v.LastActive) > 24*time.Hour {
+			continue // Skip inactive validators to prevent reward accrual
 		}
-		reward := prs.CalculateReward(validator)
-		prs.Blockchain.UpdateTokenBalance(validator.Address, reward)
+		v.Reward = rd.calculateReward(v, totalTransactions)
 	}
 }
 
-// ApplySlashing applies penalties based on the severity of the violation
-func (prs *PoSRewardSystem) ApplySlashing(validator *Validator, severity int) {
-	if severity > 0 {
-		lossPercentage := big.NewInt(int64(severity * 10)) // 10% per severity level
-		lossAmount := new(big.Int).Mul(validator.Stake, lossPercentage)
-		lossAmount.Div(lossAmount, big.NewInt(100))
-		validator.Stake.Sub(validator.Stake, lossAmount)
-		validator.IsSlashed = true
-		storage.UpdateValidatorStatus(validator.Address, validator.IsSlashed)
-	}
+// calculateReward determines the reward for a single validator incorporating stake, transaction volume, and fees.
+func (rd *RewardDistributor) calculateReward(v *Validator, totalTransactions *big.Int) *big.Int {
+	stakeRatio := new(big.Int).Div(v.Stake, rd.totalStaked)
+	transactionRatio := new(big.Int).Div(big.NewInt(int64(v.Transactions)), totalTransactions)
+
+	// Calculate transaction fee rewards and base rewards from the reward pool
+	feeComponent := new(big.Int).Mul(transactionRatio, rd.transactionFees)
+	baseReward := new(big.Int).Mul(stakeRatio, rd.rewardPool)
+	baseReward.Mul(baseReward, transactionRatio) // Base reward proportional to stake and transactions
+	baseReward.Add(baseReward, feeComponent)     // Total reward includes a portion of the transaction fees
+
+	return baseReward
 }
 
-// ValidateBlockSignature checks if a block has been validly signed by the majority of validators
-func (prs *PoSRewardSystem) ValidateBlockSignature(block *Block, validators []*Validator) bool {
-	signatureCount := 0
-	for _, validator := range validators {
-		if crypto.VerifySignature(validator.Address, block.Hash, block.Signature) {
-			signatureCount++
-		}
-	}
-	return signatureCount >= len(validators)/2+1 // Simple majority
+// RegisterValidator adds a new validator to the pool and updates the staking total.
+func (rd *RewardDistributor) RegisterValidator(validator *Validator) {
+	rd.mutex.Lock()
+	defer rd.mutex.Unlock()
+
+	rd.validators[validator.PublicKey] = validator
+	rd.totalStaked.Add(rd.totalStaked, validator.Stake)
 }
 
-// SelectValidators uses a VRF to randomly select validators for the next block
-func (prs *PoSRewardSystem) SelectValidators() []*Validator {
-	seed := prs.Blockchain.LatestBlock().Hash
-	selectedValidators := []*Validator{}
-	for _, validator := range prs.Blockchain.Validators {
-		if vrf.Verify(validator.Address, seed, nil) { // Simplified check
-			selectedValidators = append(selectedValidators, validator)
-		}
-	}
-	return selectedValidators
+// UpdateTransactionFees adjusts the total transaction fees pool, recalculating from recent block transactions.
+func (rd *RewardDistributor) UpdateTransactionFees(fees *big.Int) {
+	rd.mutex.Lock()
+	defer rd.mutex.Unlock()
+
+	rd.transactionFees.Add(rd.transactionFees, fees)
 }
 
-// Example main function to run and test PoS reward system
-func main() {
-	blockchain := InitializeBlockchain()
-	posRewardSystem := NewPoSRewardSystem(blockchain)
-
-	// Example of running reward distribution
-	posRewardSystem.DistributeRewards()
-
-	// Slashing example
-	validator := blockchain.Validators[0] // Assuming there's at least one validator
-	posRewardSystem.ApplySlashing(&validator, 2)
-
-	// Validate block signature
-	block := blockchain.LatestBlock()
-	validators := posRewardSystem.SelectValidators()
-	if posRewardSystem.ValidateBlockSignature(block, validators) {
-		// Proceed with blockchain operations
-	}
+// TransactionHash generates a hash for transaction data, providing a cryptographic security layer for transaction verification.
+func TransactionHash(txData []byte) []byte {
+	hash := sha256.Sum256(txData)
+	return hash[:]
 }

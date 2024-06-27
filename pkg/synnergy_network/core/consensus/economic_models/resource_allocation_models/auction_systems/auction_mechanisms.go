@@ -2,197 +2,183 @@ package auction_systems
 
 import (
 	"errors"
-	"fmt"
-	"math/big"
+	"sort"
 	"sync"
-	"time"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/smart_contract"
-	"github.com/synthron_blockchain_final/pkg/layer0/core/transaction"
-)
-
-// AuctionType defines the type of auction
-type AuctionType int
-
-const (
-	// FirstPriceAuction means the highest bidder wins and pays their bid
-	FirstPriceAuction AuctionType = iota
-	// SecondPriceAuction means the highest bidder wins but pays the second highest bid
-	SecondPriceAuction
 )
 
 // Bid represents a bid in the auction
 type Bid struct {
 	BidderID string
-	Amount   *big.Int
-	Timestamp time.Time
+	Amount   float64
+	Priority int
 }
 
-// Auction represents an auction mechanism
+// Auction represents an auction in the network
 type Auction struct {
-	sync.Mutex
-	ID          string
-	Type        AuctionType
-	Bids        []*Bid
-	StartTime   time.Time
-	EndTime     time.Time
-	Resources   int
-	IsCompleted bool
-	WinningBid  *Bid
+	mu     sync.Mutex
+	ID     string
+	Bids   []*Bid
+	Status string
 }
 
-// AuctionManager manages multiple auctions
-type AuctionManager struct {
-	sync.Mutex
-	auctions map[string]*Auction
+// Network represents the entire network state
+type Network struct {
+	mu       sync.Mutex
+	Auctions map[string]*Auction
+	Nodes    map[string]*Node
 }
 
-// NewAuctionManager initializes a new instance of AuctionManager
-func NewAuctionManager() *AuctionManager {
-	return &AuctionManager{
-		auctions: make(map[string]*Auction),
+// Node represents a network participant
+type Node struct {
+	ID    string
+	Stake int
+}
+
+// NewNetwork initializes a new Network
+func NewNetwork() *Network {
+	return &Network{
+		Auctions: make(map[string]*Auction),
+		Nodes:    make(map[string]*Node),
 	}
 }
 
 // CreateAuction creates a new auction
-func (am *AuctionManager) CreateAuction(id string, auctionType AuctionType, startTime, endTime time.Time, resources int) (*Auction, error) {
-	am.Lock()
-	defer am.Unlock()
-	if _, exists := am.auctions[id]; exists {
-		return nil, errors.New("auction already exists")
+func (n *Network) CreateAuction(id string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.Auctions[id] = &Auction{
+		ID:     id,
+		Bids:   []*Bid{},
+		Status: "open",
 	}
-
-	auction := &Auction{
-		ID:        id,
-		Type:      auctionType,
-		StartTime: startTime,
-		EndTime:   endTime,
-		Resources: resources,
-	}
-	am.auctions[id] = auction
-	return auction, nil
 }
 
-// PlaceBid places a bid on an auction
-func (am *AuctionManager) PlaceBid(auctionID, bidderID string, amount *big.Int) error {
-	am.Lock()
-	defer am.Unlock()
-
-	auction, exists := am.auctions[auctionID]
+// AddBid adds a bid to an auction
+func (n *Network) AddBid(auctionID string, bidderID string, amount float64, priority int) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	auction, exists := n.Auctions[auctionID]
 	if !exists {
 		return errors.New("auction not found")
 	}
-	if time.Now().Before(auction.StartTime) || time.Now().After(auction.EndTime) {
-		return errors.New("auction is not active")
+	if auction.Status != "open" {
+		return errors.New("auction is not open")
 	}
-
-	bid := &Bid{
-		BidderID:  bidderID,
-		Amount:    amount,
-		Timestamp: time.Now(),
-	}
-	auction.Bids = append(auction.Bids, bid)
+	auction.Bids = append(auction.Bids, &Bid{
+		BidderID: bidderID,
+		Amount:   amount,
+		Priority: priority,
+	})
 	return nil
 }
 
-// EndAuction ends the auction and determines the winner
-func (am *AuctionManager) EndAuction(auctionID string) (*Bid, error) {
-	am.Lock()
-	defer am.Unlock()
-
-	auction, exists := am.auctions[auctionID]
+// CloseAuction closes the auction and returns the winning bid
+func (n *Network) CloseAuction(auctionID string) (*Bid, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	auction, exists := n.Auctions[auctionID]
 	if !exists {
 		return nil, errors.New("auction not found")
 	}
-	if time.Now().Before(auction.EndTime) {
-		return nil, errors.New("auction is still active")
+	if auction.Status != "open" {
+		return nil, errors.New("auction is not open")
 	}
-	if auction.IsCompleted {
-		return auction.WinningBid, nil
-	}
-
-	auction.IsCompleted = true
+	auction.Status = "closed"
+	sort.Slice(auction.Bids, func(i, j int) bool {
+		if auction.Bids[i].Amount == auction.Bids[j].Amount {
+			return auction.Bids[i].Priority > auction.Bids[j].Priority
+		}
+		return auction.Bids[i].Amount > auction.Bids[j].Amount
+	})
 	if len(auction.Bids) == 0 {
-		return nil, errors.New("no bids placed")
+		return nil, errors.New("no bids received")
 	}
-
-	auction.WinningBid = auction.determineWinner()
-	return auction.WinningBid, nil
+	return auction.Bids[0], nil
 }
 
-// determineWinner determines the winner of the auction based on the auction type
-func (a *Auction) determineWinner() *Bid {
-	var winningBid *Bid
-	switch a.Type {
-	case FirstPriceAuction:
-		winningBid = a.getHighestBid()
-	case SecondPriceAuction:
-		winningBid = a.getSecondHighestBid()
+// AllocateResourcesBasedOnAuction allocates resources based on auction results
+func (n *Network) AllocateResourcesBasedOnAuction(auctionID string, totalResources int) (map[string]int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	auction, exists := n.Auctions[auctionID]
+	if !exists {
+		return nil, errors.New("auction not found")
 	}
-	return winningBid
+	if auction.Status != "closed" {
+		return nil, errors.New("auction is not closed")
+	}
+
+	allocation := make(map[string]int)
+	totalBids := 0.0
+	for _, bid := range auction.Bids {
+		totalBids += bid.Amount
+	}
+
+	for _, bid := range auction.Bids {
+		allocation[bid.BidderID] = int((bid.Amount / totalBids) * float64(totalResources))
+	}
+
+	return allocation, nil
 }
 
-// getHighestBid gets the highest bid
-func (a *Auction) getHighestBid() *Bid {
-	var highestBid *Bid
-	for _, bid := range a.Bids {
-		if highestBid == nil || bid.Amount.Cmp(highestBid.Amount) > 0 {
-			highestBid = bid
-		}
+// AddNode adds a node to the network
+func (n *Network) AddNode(id string, stake int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.Nodes[id] = &Node{
+		ID:    id,
+		Stake: stake,
 	}
-	return highestBid
 }
 
-// getSecondHighestBid gets the highest bidder but pays the second highest amount
-func (a *Auction) getSecondHighestBid() *Bid {
-	var highestBid, secondHighestBid *Bid
-	for _, bid := range a.Bids {
-		if highestBid == nil || bid.Amount.Cmp(highestBid.Amount) > 0 {
-			secondHighestBid = highestBid
-			highestBid = bid
-		} else if secondHighestBid == nil || bid.Amount.Cmp(secondHighestBid.Amount) > 0 {
-			secondHighestBid = bid
-		}
+// RemoveNode removes a node from the network
+func (n *Network) RemoveNode(id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	_, exists := n.Nodes[id]
+	if !exists {
+		return errors.New("node not found")
 	}
-
-	if secondHighestBid == nil {
-		secondHighestBid = highestBid
-	}
-	winningBid := &Bid{
-		BidderID:  highestBid.BidderID,
-		Amount:    secondHighestBid.Amount,
-		Timestamp: highestBid.Timestamp,
-	}
-	return winningBid
+	delete(n.Nodes, id)
+	return nil
 }
 
-// Example usage
-func main() {
-	am := NewAuctionManager()
+// GetNodeStake returns the current stake of a node
+func (n *Network) GetNodeStake(id string) (int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	node, exists := n.Nodes[id]
+	if !exists {
+		return 0, errors.New("node not found")
+	}
+	return node.Stake, nil
+}
 
-	auction, err := am.CreateAuction("auction1", FirstPriceAuction, time.Now().Add(time.Minute), time.Now().Add(time.Hour), 100)
-	if err != nil {
-		fmt.Println("Error creating auction:", err)
-		return
+// ListNodes lists all nodes in the network
+func (n *Network) ListNodes() []*Node {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	nodes := []*Node{}
+	for _, node := range n.Nodes {
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+// AllocateResourcesBasedOnStake allocates resources to nodes based on their stakes
+func (n *Network) AllocateResourcesBasedOnStake(totalResources int) map[string]int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	allocation := make(map[string]int)
+	totalStake := 0
+
+	for _, node := range n.Nodes {
+		totalStake += node.Stake
 	}
 
-	err = am.PlaceBid("auction1", "user1", big.NewInt(1000))
-	if err != nil {
-		fmt.Println("Error placing bid:", err)
-		return
+	for id, node := range n.Nodes {
+		allocation[id] = int(float64(node.Stake) / float64(totalStake) * float64(totalResources))
 	}
 
-	err = am.PlaceBid("auction1", "user2", big.NewInt(1500))
-	if err != nil {
-		fmt.Println("Error placing bid:", err)
-		return
-	}
-
-	winningBid, err := am.EndAuction("auction1")
-	if err != nil {
-		fmt.Println("Error ending auction:", err)
-		return
-	}
-
-	fmt.Printf("Winning Bidder: %s, Amount: %s\n", winningBid.BidderID, winningBid.Amount.String())
+	return allocation
 }

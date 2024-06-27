@@ -1,119 +1,81 @@
-package hybrid
+package consensus
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"math"
-	"sync"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
-
-	"github.com/synthron/synthroncore/block"
-	"github.com/synthron/synthroncore/transaction"
-	"github.com/synthron/synthroncore/utils"
-	"golang.org/x/crypto/argon2"
+	"synthron-blockchain/pkg/synnergy_network/core/common"
 )
 
-const (
-	// Initial block reward in Synthrons (SYN)
-	initialBlockReward = 1252.0
-	// Halving interval in number of blocks
-	halvingInterval = 200000
-	// Maximum coins to be issued
-	maxCoins = 500000000
-)
-
-type Block struct {
-	Transactions []*transaction.Transaction
-	PrevHash     string
-	Hash         string
-	Timestamp    int64
-	Nonce        uint64
-}
-
-type Blockchain struct {
-	Blocks []*Block
-	Mutex  sync.Mutex
-}
-
-// NewBlock creates a new block using the specified transactions and the previous hash
-func NewBlock(transactions []*transaction.Transaction, prevHash string) *Block {
-	block := &Block{
-		Transactions: transactions,
-		PrevHash:     prevHash,
-		Timestamp:    time.Now().UnixNano(),
+// Function to create a new block
+func CreateBlock(transactions []*common.Transaction, prevBlockHash string) *common.Block {
+	block := &common.Block{
+		Timestamp:     time.Now().Unix(),
+		Transactions:  transactions,
+		PrevBlockHash: prevBlockHash,
 	}
-	block.Hash = block.calculateHash()
+
+	block.Hash = CalculateHash(block)
 	return block
 }
 
-// calculateHash computes the hash of the block using SHA-256, simulating the PoW process
-func (b *Block) calculateHash() string {
-	record := utils.ToHex(b.Timestamp) + b.PrevHash + hashTransactions(b.Transactions) + utils.ToHex(b.Nonce)
-	h := sha256.New()
-	h.Write([]byte(record))
-	return hex.EncodeToString(h.Sum(nil))
+// Function to calculate the hash of a block
+func CalculateHash(block *common.Block) string {
+	record := fmt.Sprintf("%d%s%d", block.Timestamp, block.PrevBlockHash, block.Nonce)
+	hash := sha256.New()
+	hash.Write([]byte(record))
+	hashed := hash.Sum(nil)
+	return hex.EncodeToString(hashed)
 }
 
-// hashTransactions computes a hash over all transactions in the block
-func hashTransactions(transactions []*transaction.Transaction) string {
-	var txHashes string
-	for _, tx := range transactions {
-		txHashes += tx.Hash()
-	}
-	h := sha256.New()
-	h.Write([]byte(txHashes))
-	return hex.EncodeToString(h.Sum(nil))
+// Function to validate a block
+func ValidateBlock(block *common.Block, difficulty int) bool {
+	prefix := strings.Repeat("0", difficulty)
+	return strings.HasPrefix(block.Hash, prefix)
 }
 
-// MineBlock simulates the PoW mining process
-func (b *Block) MineBlock(difficulty int) {
-	for !utils.HasPrefix(b.Hash, difficulty) {
-		b.Nonce++
-		b.Hash = b.calculateHash()
-	}
-}
-
-// ValidateBlock checks if the block's hash meets the network's difficulty requirements
-func (b *Block) ValidateBlock(difficulty int) bool {
-	return utils.HasPrefix(b.Hash, difficulty)
-}
-
-// AddBlock adds a new block to the blockchain after validation
-func (bc *Blockchain) AddBlock(block *Block, difficulty int) bool {
-	bc.Mutex.Lock()
-	defer bc.Mutex.Unlock()
-
-	// Validate the new block
-	if !block.ValidateBlock(difficulty) {
-		return false
+// AddBlock adds a new block to the blockchain after performing necessary validations.
+func (bc *common.Blockchain) AddBlock(block *common.Block) error {
+	if len(bc.Blocks) > 0 {
+		block.PrevBlockHash = bc.Blocks[len(bc.Blocks)-1].Hash
 	}
 
-	// Append to the blockchain
+	block.Hash = CalculateHash(block)
+	if !ValidateBlock(block, bc.Difficulty) {
+		return errors.New("invalid proof of work")
+	}
+
 	bc.Blocks = append(bc.Blocks, block)
-	return true
+	return nil
 }
 
-// calculateReward calculates the mining reward for the block at the given height
-func calculateReward(height int) float64 {
-	reductions := height / halvingInterval
-	if reductions > math.Log2(maxCoins/initialBlockReward) {
-		return 0
+// MineBlock performs the proof of work algorithm to mine a new block.
+func (bc *common.Blockchain) MineBlock(transactions []*common.Transaction) (*common.Block, error) {
+	var newBlock *common.Block
+	nonce := 0
+
+	for {
+		newBlock = &common.Block{
+			Timestamp:    time.Now().Unix(),
+			Transactions: transactions,
+			PrevBlockHash: bc.Blocks[len(bc.Blocks)-1].Hash,
+			Nonce:        nonce,
+		}
+		newBlock.Hash = CalculateHash(newBlock)
+
+		if ValidateBlock(newBlock, bc.Difficulty) {
+			break
+		}
+
+		nonce++
 	}
-	return initialBlockReward / math.Pow(2, float64(reductions))
-}
 
-// RewardDistribution handles the distribution of mining rewards including halving
-func (bc *Blockchain) RewardDistribution(block *Block) {
-	height := len(bc.Blocks)
-	reward := calculateReward(height)
-	blockReward := block.CreateCoinbaseTransaction(reward)
-	bc.AddTransaction(blockReward)
-}
+	if err := bc.AddBlock(newBlock); err != nil {
+		return nil, err
+	}
 
-// simulateArgon2Mining simulates mining with Argon2 for PoW phase
-func simulateArgon2Mining(input []byte) string {
-	return hex.EncodeToString(argon2.IDKey(input, []byte("somesalt"), 1, 64*1024, 4, 32))
+	return newBlock, nil
 }
-
-// The above code integrates the blockchain with a PoW mining mechanism using Argon2,
-// includes reward halving and secure hashing to maintain network integrity and economic stability.

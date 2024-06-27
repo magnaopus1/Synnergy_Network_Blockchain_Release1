@@ -2,125 +2,127 @@ package allocation_algorithms
 
 import (
 	"errors"
-	"fmt"
-	"math/big"
 	"sync"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/crypto"
-	"github.com/synthron_blockchain_final/pkg/layer0/core/network"
-	"github.com/synthron_blockchain_final/pkg/layer0/core/transaction"
 )
 
-// ParticipantStakeManager manages resource allocation based on participant stakes
-type ParticipantStakeManager struct {
-	mu         sync.Mutex
-	participants map[string]*Participant
+// Node represents a network participant
+type Node struct {
+	ID     string
+	Stake  int
+	Weight int
 }
 
-// Participant represents a network participant
-type Participant struct {
-	ID    string
-	Stake *big.Int
+// Network represents the entire network state
+type Network struct {
+	mu     sync.Mutex
+	Nodes  map[string]*Node
+	TotalStake int
 }
 
-// NewParticipantStakeManager initializes a new instance of ParticipantStakeManager
-func NewParticipantStakeManager() *ParticipantStakeManager {
-	return &ParticipantStakeManager{
-		participants: make(map[string]*Participant),
+// NewNetwork initializes a new Network
+func NewNetwork() *Network {
+	return &Network{
+		Nodes: make(map[string]*Node),
 	}
 }
 
-// AddParticipant adds a new participant to the network
-func (psm *ParticipantStakeManager) AddParticipant(id string, stake *big.Int) {
-	psm.mu.Lock()
-	defer psm.mu.Unlock()
-	psm.participants[id] = &Participant{
-		ID:    id,
-		Stake: stake,
+// AddNode adds a node to the network with a given stake
+func (n *Network) AddNode(id string, stake int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.Nodes[id] = &Node{
+		ID:     id,
+		Stake:  stake,
+		Weight: 0,
 	}
+	n.TotalStake += stake
+	n.updateWeights()
 }
 
-// UpdateStake updates the stake of an existing participant
-func (psm *ParticipantStakeManager) UpdateStake(id string, newStake *big.Int) error {
-	psm.mu.Lock()
-	defer psm.mu.Unlock()
-	participant, exists := psm.participants[id]
+// RemoveNode removes a node from the network
+func (n *Network) RemoveNode(id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	node, exists := n.Nodes[id]
 	if !exists {
-		return errors.New("participant not found")
+		return errors.New("node not found")
 	}
-	participant.Stake = newStake
+	n.TotalStake -= node.Stake
+	delete(n.Nodes, id)
+	n.updateWeights()
 	return nil
 }
 
-// GetStake retrieves the stake of a participant
-func (psm *ParticipantStakeManager) GetStake(id string) (*big.Int, error) {
-	psm.mu.Lock()
-	defer psm.mu.Unlock()
-	participant, exists := psm.participants[id]
+// UpdateNodeStake updates the stake of an existing node
+func (n *Network) UpdateNodeStake(id string, stake int) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	node, exists := n.Nodes[id]
 	if !exists {
-		return nil, errors.New("participant not found")
+		return errors.New("node not found")
 	}
-	return participant.Stake, nil
+	n.TotalStake -= node.Stake
+	node.Stake = stake
+	n.TotalStake += stake
+	n.updateWeights()
+	return nil
 }
 
-// AllocateResources allocates resources to transactions based on participant stakes
-func (psm *ParticipantStakeManager) AllocateResources(transactions []*transaction.Transaction) ([]*transaction.Transaction, error) {
-	if len(transactions) == 0 {
-		return nil, errors.New("no transactions to allocate resources for")
+// updateWeights recalculates the weights of all nodes based on their stakes
+func (n *Network) updateWeights() {
+	for _, node := range n.Nodes {
+		node.Weight = n.calculateWeight(node.Stake)
 	}
-
-	psm.mu.Lock()
-	defer psm.mu.Unlock()
-
-	// Sort transactions based on the stake of their participants
-	sortedTransactions := psm.sortTransactionsByStake(transactions)
-
-	return sortedTransactions, nil
 }
 
-func (psm *ParticipantStakeManager) sortTransactionsByStake(transactions []*transaction.Transaction) []*transaction.Transaction {
-	// Placeholder: sort transactions by the stake of their participants
-	// In real-world scenarios, additional factors like transaction value, sender reputation, etc., would be considered
-	for i := 0; i < len(transactions); i++ {
-		for j := i + 1; j < len(transactions); j++ {
-			stakeI, _ := psm.GetStake(transactions[i].Sender)
-			stakeJ, _ := psm.GetStake(transactions[j].Sender)
-			if stakeI.Cmp(stakeJ) < 0 {
-				transactions[i], transactions[j] = transactions[j], transactions[i]
-			}
-		}
+// calculateWeight calculates the weight of a node based on its stake
+func (n *Network) calculateWeight(stake int) int {
+	if n.TotalStake == 0 {
+		return 0
 	}
-	return transactions
+	return int(float64(stake) / float64(n.TotalStake) * 100)
 }
 
-// Example use case
-func main() {
-	psm := NewParticipantStakeManager()
-	psm.AddParticipant("user1", big.NewInt(1000))
-	psm.AddParticipant("user2", big.NewInt(5000))
-	psm.AddParticipant("user3", big.NewInt(3000))
-
-	transactions := []*transaction.Transaction{
-		{ID: "tx1", Sender: "user1", Fee: big.NewInt(100)},
-		{ID: "tx2", Sender: "user2", Fee: big.NewInt(200)},
-		{ID: "tx3", Sender: "user3", Fee: big.NewInt(150)},
+// GetNodeWeight returns the current weight of a node
+func (n *Network) GetNodeWeight(id string) (int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	node, exists := n.Nodes[id]
+	if !exists {
+		return 0, errors.New("node not found")
 	}
+	return node.Weight, nil
+}
 
-	allocatedTransactions, err := psm.AllocateResources(transactions)
-	if err != nil {
-		fmt.Println("Error allocating resources:", err)
-		return
+// GetNodeStake returns the current stake of a node
+func (n *Network) GetNodeStake(id string) (int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	node, exists := n.Nodes[id]
+	if !exists {
+		return 0, errors.New("node not found")
 	}
+	return node.Stake, nil
+}
 
-	fmt.Println("Allocated transactions:")
-	for _, tx := range allocatedTransactions {
-		fmt.Printf("Transaction ID: %s, Sender: %s, Fee: %s\n", tx.ID, tx.Sender, tx.Fee.String())
+// ListNodes lists all nodes in the network
+func (n *Network) ListNodes() []*Node {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	nodes := []*Node{}
+	for _, node := range n.Nodes {
+		nodes = append(nodes, node)
 	}
+	return nodes
+}
 
-	stake, err := psm.GetStake("user2")
-	if err != nil {
-		fmt.Println("Error getting stake:", err)
-		return
+// AllocateResources allocates resources to nodes based on their weights
+func (n *Network) AllocateResources(totalResources int) map[string]int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	allocation := make(map[string]int)
+	for id, node := range n.Nodes {
+		allocation[id] = int(float64(node.Weight) / 100 * float64(totalResources))
 	}
-	fmt.Printf("User2's stake: %s\n", stake.String())
+	return allocation
 }

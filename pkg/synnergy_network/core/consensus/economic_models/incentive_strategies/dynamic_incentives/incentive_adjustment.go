@@ -1,214 +1,160 @@
 package dynamic_incentives
 
 import (
-	"fmt"
-	"math/big"
+	"errors"
 	"sync"
-	"time"
 )
 
-// IncentiveAdjustmentType defines the type of incentive adjustment
-type IncentiveAdjustmentType string
-
+// Constants for dynamic incentives adjustment
 const (
-	IncreaseIncentive IncentiveAdjustmentType = "increase"
-	DecreaseIncentive IncentiveAdjustmentType = "decrease"
+	BaseReward     = 10.0
+	MaxPerformance = 100.0
 )
 
-// IncentiveAdjustment defines the structure of an incentive adjustment
-type IncentiveAdjustment struct {
-	Type        IncentiveAdjustmentType
-	Amount      *big.Int
-	AdjustedAt  time.Time
-	Description string
+// User represents a participant in the network
+type User struct {
+	ID               string
+	Stake            float64
+	PerformanceScore float64
 }
 
-// DynamicIncentiveManager manages the dynamic incentives in the network
-type DynamicIncentiveManager struct {
-	incentives map[string][]*Incentive
-	mu         sync.Mutex
+// NetworkMetrics represents the overall performance metrics of the network
+type NetworkMetrics struct {
+	PerformanceScore      float64
+	TotalTransactionVolume float64
 }
 
-// NewDynamicIncentiveManager initializes a new DynamicIncentiveManager
-func NewDynamicIncentiveManager() *DynamicIncentiveManager {
-	return &DynamicIncentiveManager{
-		incentives: make(map[string][]*Incentive),
+// IncentiveSystem represents the incentive calculation system
+type IncentiveSystem struct {
+	mu              sync.Mutex
+	Users           map[string]*User
+	NetworkMetrics  NetworkMetrics
+	TotalStake      float64
+}
+
+// NewIncentiveSystem creates a new IncentiveSystem instance
+func NewIncentiveSystem() *IncentiveSystem {
+	return &IncentiveSystem{
+		Users: make(map[string]*User),
 	}
 }
 
-// IssueIncentive issues a new dynamic incentive to a user
-func (dim *DynamicIncentiveManager) IssueIncentive(recipient string, incentiveType IncentiveType, amount *big.Int, duration time.Duration) (*Incentive, error) {
-	if amount.Cmp(big.NewInt(0)) <= 0 {
-		return nil, fmt.Errorf("incentive amount must be positive")
+// AddUser adds a new user to the incentive system
+func (is *IncentiveSystem) AddUser(id string, stake, performanceScore float64) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	is.Users[id] = &User{
+		ID:               id,
+		Stake:            stake,
+		PerformanceScore: performanceScore,
 	}
-
-	incentive := &Incentive{
-		Type:      incentiveType,
-		Amount:    amount,
-		IssuedAt:  time.Now(),
-		Expiry:    time.Now().Add(duration),
-		Recipient: recipient,
-	}
-
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-	dim.incentives[recipient] = append(dim.incentives[recipient], incentive)
-
-	fmt.Printf("Issued incentive of type %s to user %s with amount %s\n", incentiveType, recipient, amount.String())
-	return incentive, nil
+	is.TotalStake += stake
 }
 
-// RedeemIncentive redeems an incentive for a user
-func (dim *DynamicIncentiveManager) RedeemIncentive(recipient string, incentiveType IncentiveType) (*Incentive, error) {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-
-	userIncentives, exists := dim.incentives[recipient]
-	if !exists || len(userIncentives) == 0 {
-		return nil, fmt.Errorf("no incentives found for user %s", recipient)
-	}
-
-	var redeemedIncentive *Incentive
-	for i, incentive := range userIncentives {
-		if incentive.Type == incentiveType && time.Now().Before(incentive.Expiry) {
-			redeemedIncentive = incentive
-			// Remove redeemed incentive
-			dim.incentives[recipient] = append(userIncentives[:i], userIncentives[i+1:]...)
-			break
-		}
-	}
-
-	if redeemedIncentive == nil {
-		return nil, fmt.Errorf("no valid incentive of type %s found for user %s", incentiveType, recipient)
-	}
-
-	fmt.Printf("Redeemed incentive of type %s for user %s with amount %s\n", incentiveType, recipient, redeemedIncentive.Amount.String())
-	return redeemedIncentive, nil
+// CalculateDynamicIncentive calculates the dynamic incentive for a user
+func (is *IncentiveSystem) CalculateDynamicIncentive(user *User) float64 {
+	return BaseReward * (1 + user.PerformanceScore/MaxPerformance)
 }
 
-// GetIncentives lists all incentives for a user
-func (dim *DynamicIncentiveManager) GetIncentives(recipient string) ([]*Incentive, error) {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
+// CalculateIncentives calculates the incentives for all users
+func (is *IncentiveSystem) CalculateIncentives() map[string]float64 {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	incentives := make(map[string]float64)
+	for id, user := range is.Users {
+		incentives[id] = is.CalculateDynamicIncentive(user)
+	}
+	return incentives
+}
 
-	userIncentives, exists := dim.incentives[recipient]
+// AdjustPerformanceScore adjusts the performance score of a user
+func (is *IncentiveSystem) AdjustPerformanceScore(userID string, adjustment float64) error {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
 	if !exists {
-		return nil, fmt.Errorf("no incentives found for user %s", recipient)
+		return errors.New("user not found")
 	}
-
-	return userIncentives, nil
+	user.PerformanceScore += adjustment
+	if user.PerformanceScore > MaxPerformance {
+		user.PerformanceScore = MaxPerformance
+	} else if user.PerformanceScore < 0 {
+		user.PerformanceScore = 0
+	}
+	return nil
 }
 
-// CleanExpiredIncentives removes expired incentives from the system
-func (dim *DynamicIncentiveManager) CleanExpiredIncentives() {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
+// UpdateNetworkMetrics updates the network performance metrics
+func (is *IncentiveSystem) UpdateNetworkMetrics(performanceScore, totalTransactionVolume float64) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	is.NetworkMetrics.PerformanceScore = performanceScore
+	is.NetworkMetrics.TotalTransactionVolume = totalTransactionVolume
+}
 
-	for recipient, incentives := range dim.incentives {
-		var validIncentives []*Incentive
-		for _, incentive := range incentives {
-			if time.Now().Before(incentive.Expiry) {
-				validIncentives = append(validIncentives, incentive)
-			} else {
-				fmt.Printf("Removed expired incentive of type %s for user %s with amount %s\n", incentive.Type, recipient, incentive.Amount.String())
-			}
+// GetUserPerformanceScore gets the performance score of a user
+func (is *IncentiveSystem) GetUserPerformanceScore(userID string) (float64, error) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
+	if !exists {
+		return 0, errors.New("user not found")
+	}
+	return user.PerformanceScore, nil
+}
+
+// ListUsers returns a list of all users in the incentive system
+func (is *IncentiveSystem) ListUsers() []*User {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	users := []*User{}
+	for _, user := range is.Users {
+		users = append(users, user)
+	}
+	return users
+}
+
+// StakeBasedAllocation calculates stake-based resource allocation for a user
+func (is *IncentiveSystem) StakeBasedAllocation(userID string) (float64, error) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
+	if !exists {
+		return 0, errors.New("user not found")
+	}
+	if is.TotalStake == 0 {
+		return 0, errors.New("total stake is zero")
+	}
+	return (user.Stake / is.TotalStake), nil
+}
+
+// TransactionImportance calculates transaction importance
+func (is *IncentiveSystem) TransactionImportance(value, priority, size float64) float64 {
+	return (value + priority) / size
+}
+
+// FeeRedistribution calculates the redistributed fee for validators
+func (is *IncentiveSystem) FeeRedistribution(collectedFees float64, numValidators int) float64 {
+	if numValidators == 0 {
+		return 0
+	}
+	return collectedFees / float64(numValidators)
+}
+
+// ZeroFeeEligibility checks if a transaction is eligible for zero fee
+func (is *IncentiveSystem) ZeroFeeEligibility(transactionType string, value float64) bool {
+	switch transactionType {
+	case "sustainability":
+		return true
+	case "microtransaction":
+		if value < 1.0 {
+			return true
 		}
-		dim.incentives[recipient] = validIncentives
 	}
+	return false
 }
 
-// AdjustIncentives dynamically adjusts the incentives based on network conditions
-func (dim *DynamicIncentiveManager) AdjustIncentives(networkCondition string) {
-	dim.mu.Lock()
-	defer dim.mu.Unlock()
-
-	for _, incentives := range dim.incentives {
-		for _, incentive := range incentives {
-			switch networkCondition {
-			case "high_congestion":
-				incentive.Amount = new(big.Int).Div(incentive.Amount, big.NewInt(2)) // Halve the incentive amount
-				fmt.Printf("Adjusted incentive of type %s for user %s due to high congestion. New amount: %s\n", incentive.Type, incentive.Recipient, incentive.Amount.String())
-			case "low_activity":
-				incentive.Amount = new(big.Int).Mul(incentive.Amount, big.NewInt(2)) // Double the incentive amount
-				fmt.Printf("Adjusted incentive of type %s for user %s due to low activity. New amount: %s\n", incentive.Type, incentive.Recipient, incentive.Amount.String())
-			}
-		}
-	}
-}
-
-// RecordAdjustment records an incentive adjustment
-func (dim *DynamicIncentiveManager) RecordAdjustment(incentive *Incentive, adjustmentType IncentiveAdjustmentType, amount *big.Int, description string) (*IncentiveAdjustment, error) {
-	if amount.Cmp(big.NewInt(0)) <= 0 {
-		return nil, fmt.Errorf("adjustment amount must be positive")
-	}
-
-	adjustment := &IncentiveAdjustment{
-		Type:        adjustmentType,
-		Amount:      amount,
-		AdjustedAt:  time.Now(),
-		Description: description,
-	}
-
-	// Apply adjustment
-	switch adjustmentType {
-	case IncreaseIncentive:
-		incentive.Amount = new(big.Int).Add(incentive.Amount, amount)
-	case DecreaseIncentive:
-		if incentive.Amount.Cmp(amount) < 0 {
-			return nil, fmt.Errorf("adjustment amount cannot exceed incentive amount")
-		}
-		incentive.Amount = new(big.Int).Sub(incentive.Amount, amount)
-	}
-
-	fmt.Printf("Recorded adjustment: %s incentive for user %s by %s with new amount %s\n", adjustmentType, incentive.Recipient, amount.String(), incentive.Amount.String())
-	return adjustment, nil
-}
-
-func main() {
-	dim := NewDynamicIncentiveManager()
-	amount := big.NewInt(1000)
-
-	// Issue an incentive
-	incentive, err := dim.IssueIncentive("user1", MiningIncentive, amount, 7*24*time.Hour) // 7 days expiry
-	if err != nil {
-		fmt.Println("Error issuing incentive:", err)
-		return
-	}
-
-	fmt.Println("Issued incentive:", incentive)
-
-	// Adjust incentive
-	adjustedAmount := big.NewInt(200)
-	_, err = dim.RecordAdjustment(incentive, IncreaseIncentive, adjustedAmount, "Reward for high participation")
-	if err != nil {
-		fmt.Println("Error adjusting incentive:", err)
-		return
-	}
-
-	fmt.Println("Adjusted incentive:", incentive)
-
-	// Redeem an incentive
-	redeemedIncentive, err := dim.RedeemIncentive("user1", MiningIncentive)
-	if err != nil {
-		fmt.Println("Error redeeming incentive:", err)
-		return
-	}
-
-	fmt.Println("Redeemed incentive:", redeemedIncentive)
-
-	// List incentives for a user
-	incentives, err := dim.GetIncentives("user1")
-	if err != nil {
-		fmt.Println("Error listing incentives:", err)
-		return
-	}
-
-	fmt.Println("Incentives for user1:", incentives)
-
-	// Adjust incentives based on network conditions
-	dim.AdjustIncentives("high_congestion")
-	dim.AdjustIncentives("low_activity")
-
-	// Clean expired incentives
-	dim.CleanExpiredIncentives()
+// CalculateVariableFee calculates the variable fee based on transaction volume
+func (is *IncentiveSystem) CalculateVariableFee(baseFee, transactionVolume, maxVolume float64) float64 {
+	return baseFee * (1 + (transactionVolume / maxVolume))
 }

@@ -1,94 +1,143 @@
-package synthron_coin
+package hybrid
 
 import (
+	"crypto/sha256"
 	"errors"
-	"math"
-	"math/rand"
+	"fmt"
+	"math/big"
 	"time"
+
+	"github.com/synnergy_network/core/consensus/proof_of_history"
+	"github.com/synnergy_network/core/consensus/proof_of_stake"
+	"github.com/synnergy_network/core/consensus/proof_of_work"
+	"golang.org/x/crypto/argon2"
 )
 
-// NetworkParameters holds the dynamic values that affect consensus mechanism transitions.
-type NetworkParameters struct {
-	TransactionVolume  int
-	BlockTime          float64
-	NetworkHashRate    float64
-	SecurityThreats    bool
-	StakeDistribution  map[string]float64
+// Constants for consensus mechanisms
+const (
+	PoW = "PoW"
+	PoS = "PoS"
+	PoH = "PoH"
+)
+
+// HybridConsensus manages the integration and transition between PoW, PoH, and PoS.
+type HybridConsensus struct {
+	PoWConsensus  *proof_of_work.Consensus
+	PoHConsensus  *proof_of_history.Consensus
+	PoSConsensus  *proof_of_stake.Consensus
+	CurrentMethod string
+	Alpha         float64
+	Beta          float64
 }
 
-// ConsensusSystem manages the state and operations of the consensus mechanisms.
-type ConsensusSystem struct {
-	CurrentConsensus string
-	Params           NetworkParameters
-}
-
-// NewConsensusSystem initializes a consensus system with default values.
-func NewConsensusSystem() *ConsensusSystem {
-	return &ConsensusSystem{
-		CurrentConsensus: "PoW", // Start with Proof of Work
-		Params: NetworkParameters{
-			StakeDistribution: make(map[string]float64),
-		},
+// NewHybridConsensus initializes the hybrid consensus mechanism.
+func NewHybridConsensus() *HybridConsensus {
+	return &HybridConsensus{
+		PoWConsensus:  proof_of_work.NewConsensus(),
+		PoHConsensus:  proof_of_history.NewConsensus(),
+		PoSConsensus:  proof_of_stake.NewConsensus(),
+		CurrentMethod: PoW, // Default to PoW
+		Alpha:         0.5,
+		Beta:          0.5,
 	}
 }
 
-// AdjustConsensus transitions the consensus mechanism based on network conditions.
-func (cs *ConsensusSystem) AdjustConsensus() {
-	alpha := 0.6  // Emphasis on network demand
-	beta := 0.4   // Emphasis on stake concentration
-	networkDemand := cs.calculateNetworkDemand()
-	stakeConcentration := cs.calculateStakeConcentration()
+// TransitionConsensus transitions between consensus mechanisms based on network conditions.
+func (hc *HybridConsensus) TransitionConsensus(networkLoad int, securityThreat bool, stakeConcentration float64) {
+	threshold := hc.calculateThreshold(networkLoad, stakeConcentration)
 
-	threshold := alpha*networkDemand + beta*stakeConcentration
-
-	if threshold > 100 || cs.Params.SecurityThreats {
-		cs.CurrentConsensus = "PoW"
-	} else if stakeConcentration > 50 {
-		cs.CurrentConsensus = "PoS"
+	if securityThreat || threshold > 0.7 {
+		hc.CurrentMethod = PoW
+	} else if networkLoad > 1000 {
+		hc.CurrentMethod = PoH
 	} else {
-		cs.CurrentConsensus = "PoH"
+		hc.CurrentMethod = PoS
+	}
+}
+
+// calculateThreshold calculates the threshold for consensus switching.
+func (hc *HybridConsensus) calculateThreshold(networkLoad int, stakeConcentration float64) float64 {
+	return hc.Alpha*float64(networkLoad) + hc.Beta*stakeConcentration
+}
+
+// MineBlock mines a block using the current consensus method.
+func (hc *HybridConsensus) MineBlock(data string) (interface{}, error) {
+	switch hc.CurrentMethod {
+	case PoW:
+		return hc.PoWConsensus.MineBlock(data)
+	case PoH:
+		return hc.PoHConsensus.CreatePoH(data)
+	case PoS:
+		return hc.PoSConsensus.MineBlock(data)
+	default:
+		return nil, errors.New("unsupported consensus method")
+	}
+}
+
+// AddBlock adds a block to the blockchain using the current consensus method.
+func (hc *HybridConsensus) AddBlock(block interface{}) error {
+	switch hc.CurrentMethod {
+	case PoW:
+		return hc.PoWConsensus.AddBlock(block.(*proof_of_work.Block))
+	case PoH:
+		return hc.PoHConsensus.AddBlock(block.(*proof_of_history.Block))
+	case PoS:
+		return hc.PoSConsensus.AddBlock(block.(*proof_of_stake.Block))
+	default:
+		return errors.New("unsupported consensus method")
+	}
+}
+
+// ValidateBlock validates a block using the current consensus method.
+func (hc *HybridConsensus) ValidateBlock(validatorID string, block interface{}) error {
+	switch hc.CurrentMethod {
+	case PoS:
+		return hc.PoSConsensus.ValidateBlock(validatorID, block.(*proof_of_stake.Block))
+	default:
+		return errors.New("validation is only supported for PoS in this context")
+	}
+}
+
+// SlashValidator slashes a validator for malicious behavior.
+func (hc *HybridConsensus) SlashValidator(validatorID string) error {
+	if hc.CurrentMethod == PoS {
+		return hc.PoSConsensus.SlashValidator(validatorID)
+	}
+	return errors.New("slashing is only supported for PoS in this context")
+}
+
+// Argon2 mining function
+func argon2Hash(password, salt []byte) []byte {
+	return argon2.IDKey(password, salt, 1, 64*1024, 4, 32)
+}
+
+// Example usage of Argon2 mining in PoW phase
+func (hc *HybridConsensus) MineWithArgon2(data string) (*proof_of_work.Block, error) {
+	if hc.CurrentMethod != PoW {
+		return nil, errors.New("current method is not PoW")
 	}
 
-	cs.logConsensusState()
-}
+	prevBlock := hc.PoWConsensus.Blockchain.Blocks[len(hc.PoWConsensus.Blockchain.Blocks)-1]
+	newBlock := proof_of_work.NewBlock(data, prevBlock)
+	salt := []byte("random_salt")
 
-// calculateNetworkDemand computes a metric based on transaction volume and block time.
-func (cs *ConsensusSystem) calculateNetworkDemand() float64 {
-	// Simplified demand calculation
-	return float64(cs.Params.TransactionVolume) / cs.Params.BlockTime
-}
-
-// calculateStakeConcentration calculates the proportion of coins staked.
-func (cs *ConsensusSystem) calculateStakeConcentration() float64 {
-	totalStaked := 0.0
-	for _, stake := range cs.Params.StakeDistribution {
-		totalStaked += stake
+	for !proof_of_work.IsHashValid(fmt.Sprintf("%x", argon2Hash([]byte(newBlock.Data), salt))) {
+		newBlock.Nonce++
+		newBlock.Hash = fmt.Sprintf("%x", argon2Hash([]byte(newBlock.Data), salt))
 	}
-	return totalStaked / 500000000 // total supply
+
+	hc.PoWConsensus.Blockchain.AddBlock(newBlock)
+	return newBlock, nil
 }
 
-// logConsensusState prints the current state of the consensus mechanism.
-func (cs *ConsensusSystem) logConsensusState() {
-	println("Current Consensus Mechanism:", cs.CurrentConsensus)
+// Encrypt data using AES-GCM
+func encryptData(data, key []byte) ([]byte, error) {
+	// AES-GCM encryption logic here
+	return nil, nil
 }
 
-// SimulateNetworkConditions changes network parameters to simulate real-world scenarios.
-func (cs *ConsensusSystem) SimulateNetworkConditions() {
-	// Example of adjusting network conditions
-	cs.Params.TransactionVolume = rand.Intn(1000)
-	cs.Params.BlockTime = rand.Float64() * 10
-	cs.Params.SecurityThreats = (rand.Int31n(2) == 1)
-}
-
-func main() {
-	consensus := NewConsensusSystem()
-
-	// Simulating changes in network conditions and adjusting consensus every 5 seconds
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		consensus.SimulateNetworkConditions()
-		consensus.AdjustConsensus()
-	}
+// Decrypt data using AES-GCM
+func decryptData(ciphertext, key []byte) ([]byte, error) {
+	// AES-GCM decryption logic here
+	return nil, nil
 }

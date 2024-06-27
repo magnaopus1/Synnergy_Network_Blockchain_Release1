@@ -1,101 +1,86 @@
-package proof_of_history
+package consensus
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
 )
 
-// Transaction represents the structure of a blockchain transaction.
+// Transaction represents a blockchain transaction with a timestamp and cryptographic hash.
 type Transaction struct {
-	ID        string    // Unique identifier for the transaction
-	Timestamp time.Time // Timestamp when the transaction is recorded
-	Data      string    // Transaction data
-	Hash      string    // Hash of the transaction for immutability
+	ID          string
+	Timestamp   time.Time
+	Data        string
+	Hash        string
+	PreviousHash string
 }
 
-// Block represents a block in the blockchain
-type Block struct {
-	Transactions []*Transaction
-	PrevHash     string
-	Timestamp    time.Time
-	Hash         string
+// TransactionOrderer encapsulates methods for ordering transactions using PoH.
+type TransactionOrderer struct {
+	transactions []*Transaction
+	lastHash     string
+	mu           sync.Mutex
 }
 
-// Blockchain represents the series of blocks linked by hashes
-type Blockchain struct {
-	Blocks []*Block
-	mu     sync.Mutex // Mutex to protect concurrent access
-}
-
-// NewTransaction creates a new transaction with a unique timestamp and hash.
-func NewTransaction(data string) *Transaction {
-	t := &Transaction{
-		Data:      data,
-		Timestamp: time.Now(),
+// NewTransactionOrderer creates a new transaction orderer with an initial hash.
+func NewTransactionOrderer(initialHash string) *TransactionOrderer {
+	return &TransactionOrderer{
+		lastHash: initialHash,
 	}
-	t.ID = GenerateHash(t.Timestamp.String() + t.Data)
-	t.Hash = GenerateHash(t.ID + t.Timestamp.String() + t.Data)
-	return t
 }
 
-// GenerateHash uses SHA256 to generate a hash from the input data.
-func GenerateHash(data string) string {
-	sum := sha256.Sum256([]byte(data))
-	return fmt.Sprintf("%x", sum)
+// AddTransaction adds a new transaction to the ledger, assigning it a timestamp and linking it to the previous hash.
+func (to *TransactionOrderer) AddTransaction(data string) {
+	to.mu.Lock()
+	defer to.mu.Unlock()
+
+	transaction := &Transaction{
+		ID:          generateUUID(),
+		Timestamp:   time.Now(),
+		Data:        data,
+		PreviousHash: to.lastHash,
+	}
+	transaction.Hash = to.generateHash(transaction)
+	to.transactions = append(to.transactions, transaction)
+	to.lastHash = transaction.Hash
 }
 
-// AddBlock adds a new block to the Blockchain after verifying its transactions.
-func (bc *Blockchain) AddBlock(transactions []*Transaction) {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
+// generateHash computes a SHA-256 hash for a transaction.
+func (to *TransactionOrderer) generateHash(t *Transaction) string {
+	record := fmt.Sprintf("%s%s%s", t.PreviousHash, t.Timestamp, t.Data)
+	hash := sha256.Sum256([]byte(record))
+	return hex.EncodeToString(hash[:])
+}
 
-	var lastHash string
-	if len(bc.Blocks) > 0 {
-		lastHash = bc.Blocks[len(bc.Blocks)-1].Hash
+// GetOrderedTransactions returns a list of transactions in the order they were added.
+func (to *TransactionOrderer) GetOrderedTransactions() []*Transaction {
+	to.mu.Lock()
+	defer to.mu.Unlock()
+	return to.transactions
+}
+
+// ValidateTransactionChain verifies the integrity of the transaction chain.
+func (to *TransactionOrderer) ValidateTransactionChain() bool {
+	to.mu.Lock()
+	defer to.mu.Unlock()
+
+	if len(to.transactions) == 0 {
+		return true
 	}
 
-	block := &Block{
-		Transactions: transactions,
-		PrevHash:     lastHash,
-		Timestamp:    time.Now(),
-	}
-	block.Hash = GenerateHash(block.PrevHash + block.Timestamp.String() + blockDataHash(block))
-	bc.Blocks = append(bc.Blocks, block)
-}
-
-// blockDataHash generates a hash for all transactions in a block.
-func blockDataHash(block *Block) string {
-	var transactionHashes string
-	for _, tx := range block.Transactions {
-		transactionHashes += tx.Hash
-	}
-	return GenerateHash(transactionHashes)
-}
-
-// ValidateChain checks the integrity of the blockchain and returns true if it's intact.
-func (bc *Blockchain) ValidateChain() bool {
-	for i, block := range bc.Blocks {
-		if i == 0 {
-			continue // Skip genesis block
-		}
-		if block.PrevHash != bc.Blocks[i-1].Hash {
-			return false
-		}
-		calculatedHash := GenerateHash(block.PrevHash + block.Timestamp.String() + blockDataHash(block))
-		if block.Hash != calculatedHash {
+	for i := 1; i < len(to.transactions); i++ {
+		if to.transactions[i].PreviousHash != to.transactions[i-1].Hash {
 			return false
 		}
 	}
+
 	return true
 }
 
-func main() {
-	bc := &Blockchain{}
-	trans1 := NewTransaction("Alice pays Bob 10 coins")
-	trans2 := NewTransaction("Bob pays Carol 5 coins")
-
-	bc.AddBlock([]*Transaction{trans1, trans2})
-	fmt.Println("Blockchain valid:", bc.ValidateChain())
+// generateUUID generates a unique identifier for a transaction. This is a placeholder and should use a robust UUID generation method suitable for production.
+func generateUUID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
+

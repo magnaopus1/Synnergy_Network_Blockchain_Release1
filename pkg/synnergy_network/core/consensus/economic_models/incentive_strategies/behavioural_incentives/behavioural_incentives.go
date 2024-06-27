@@ -1,113 +1,177 @@
 package behavioural_incentives
 
 import (
-	"fmt"
-	"time"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"io"
+	"math/big"
 	"sync"
 )
 
-// UserBehavior tracks user activities for incentive calculations
-type UserBehavior struct {
-	UserID    string
-	Actions   map[string]int
-	LastActive time.Time
+// Constants for incentive calculations
+const (
+	BaseReward   = 10.0
+	MaxContributionScore = 100.0
+)
+
+// Reward structure
+type Reward struct {
+	BehavioralIncentive float64 `json:"behavioral_incentive"`
+	DynamicIncentive    float64 `json:"dynamic_incentive"`
+	TokenReward         float64 `json:"token_reward"`
 }
 
-// BehavioralIncentives handles incentive strategies based on user behavior
-type BehavioralIncentives struct {
-	Users  map[string]*UserBehavior
-	mu     sync.Mutex
+// User structure
+type User struct {
+	ID               string  `json:"id"`
+	ContributionScore float64 `json:"contribution_score"`
+	Stake            float64 `json:"stake"`
 }
 
-// NewBehavioralIncentives initializes a new BehavioralIncentives instance
-func NewBehavioralIncentives() *BehavioralIncentives {
-	return &BehavioralIncentives{
-		Users: make(map[string]*UserBehavior),
+// NetworkMetrics structure
+type NetworkMetrics struct {
+	PerformanceScore float64 `json:"performance_score"`
+	TotalTransactionVolume float64 `json:"total_transaction_volume"`
+}
+
+// IncentiveSystem structure
+type IncentiveSystem struct {
+	mu              sync.Mutex
+	Users           map[string]*User
+	NetworkMetrics  NetworkMetrics
+	TotalStake      float64
+}
+
+// NewIncentiveSystem initializes a new incentive system
+func NewIncentiveSystem() *IncentiveSystem {
+	return &IncentiveSystem{
+		Users: make(map[string]*User),
 	}
 }
 
-// RecordAction records a user action for behavioral incentives
-func (bi *BehavioralIncentives) RecordAction(userID, action string) {
-	bi.mu.Lock()
-	defer bi.mu.Unlock()
+// AddUser adds a new user to the incentive system
+func (is *IncentiveSystem) AddUser(id string, contributionScore, stake float64) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	is.Users[id] = &User{
+		ID:               id,
+		ContributionScore: contributionScore,
+		Stake:            stake,
+	}
+	is.TotalStake += stake
+}
 
-	user, exists := bi.Users[userID]
+// CalculateBehavioralIncentive calculates the behavioral incentive for a user
+func (is *IncentiveSystem) CalculateBehavioralIncentive(user *User) float64 {
+	return BaseReward * (1 + user.ContributionScore/MaxContributionScore)
+}
+
+// CalculateDynamicIncentive calculates the dynamic incentive for a user
+func (is *IncentiveSystem) CalculateDynamicIncentive(user *User) float64 {
+	return BaseReward * (1 + is.NetworkMetrics.PerformanceScore/MaxContributionScore)
+}
+
+// CalculateTokenReward calculates the token reward for a user
+func (is *IncentiveSystem) CalculateTokenReward(user *User) float64 {
+	return (user.Stake / is.TotalStake) * BaseReward
+}
+
+// CalculateRewards calculates all types of rewards for a user
+func (is *IncentiveSystem) CalculateRewards(userID string) (*Reward, error) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+	user, exists := is.Users[userID]
 	if !exists {
-		user = &UserBehavior{
-			UserID:    userID,
-			Actions:   make(map[string]int),
-			LastActive: time.Now(),
-		}
-		bi.Users[userID] = user
+		return nil, errors.New("user not found")
 	}
 
-	user.Actions[action]++
-	user.LastActive = time.Now()
+	behavioralIncentive := is.CalculateBehavioralIncentive(user)
+	dynamicIncentive := is.CalculateDynamicIncentive(user)
+	tokenReward := is.CalculateTokenReward(user)
+
+	return &Reward{
+		BehavioralIncentive: behavioralIncentive,
+		DynamicIncentive:    dynamicIncentive,
+		TokenReward:         tokenReward,
+	}, nil
 }
 
-// CalculateIncentives calculates and distributes incentives based on user behavior
-func (bi *BehavioralIncentives) CalculateIncentives() {
-	bi.mu.Lock()
-	defer bi.mu.Unlock()
-
-	for _, user := range bi.Users {
-		incentive := bi.calculateUserIncentive(user)
-		bi.distributeIncentive(user.UserID, incentive)
+// Encrypt data using AES
+func Encrypt(data []byte, passphrase string) ([]byte, error) {
+	block, _ := aes.NewCipher([]byte(passphrase))
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
 	}
-}
-
-// calculateUserIncentive calculates the incentive for a single user based on their actions
-func (bi *BehavioralIncentives) calculateUserIncentive(user *UserBehavior) float64 {
-	// Example calculation: Each action type contributes a different incentive value
-	// More sophisticated models could be implemented as needed
-	incentive := 0.0
-	for action, count := range user.Actions {
-		switch action {
-		case "transaction":
-			incentive += float64(count) * 0.01 // 0.01 tokens per transaction
-		case "stake":
-			incentive += float64(count) * 0.05 // 0.05 tokens per staking action
-		case "vote":
-			incentive += float64(count) * 0.02 // 0.02 tokens per governance vote
-		}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
 	}
-	return incentive
+	return gcm.Seal(nonce, nonce, data, nil), nil
 }
 
-// distributeIncentive distributes the calculated incentive to the user
-func (bi *BehavioralIncentives) distributeIncentive(userID string, incentive float64) {
-	// In a real-world scenario, this would involve updating the user's balance on the blockchain
-	fmt.Printf("Distributing %.2f tokens to user %s\n", incentive, userID)
-}
-
-// DisplayUserActions prints the recorded actions of all users
-func (bi *BehavioralIncentives) DisplayUserActions() {
-	bi.mu.Lock()
-	defer bi.mu.Unlock()
-
-	for userID, user := range bi.Users {
-		fmt.Printf("UserID: %s, Actions: %v, LastActive: %s\n", userID, user.Actions, user.LastActive)
+// Decrypt data using AES
+func Decrypt(data []byte, passphrase string) ([]byte, error) {
+	block, err := aes.NewCipher([]byte(passphrase))
+	if err != nil {
+		return nil, err
 	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return nil, errors.New("ciphertext too short")
+	}
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-// StartIncentiveCalculationRoutine starts a routine to periodically calculate and distribute incentives
-func (bi *BehavioralIncentives) StartIncentiveCalculationRoutine(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	go func() {
-		for range ticker.C {
-			bi.CalculateIncentives()
-		}
-	}()
+// SerializeReward serializes the reward into a JSON string
+func SerializeReward(reward *Reward) (string, error) {
+	bytes, err := json.Marshal(reward)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
 }
 
-func main() {
-	bi := NewBehavioralIncentives()
-	bi.RecordAction("user1", "transaction")
-	bi.RecordAction("user1", "stake")
-	bi.RecordAction("user2", "vote")
-	bi.RecordAction("user2", "transaction")
+// DeserializeReward deserializes the reward from a JSON string
+func DeserializeReward(data string) (*Reward, error) {
+	var reward Reward
+	err := json.Unmarshal([]byte(data), &reward)
+	if err != nil {
+		return nil, err
+	}
+	return &reward, nil
+}
 
-	bi.DisplayUserActions()
-	bi.CalculateIncentives()
-	bi.StartIncentiveCalculationRoutine(24 * time.Hour)
+// SaveEncryptedReward saves the encrypted reward to a file
+func SaveEncryptedReward(reward *Reward, passphrase, filepath string) error {
+	data, err := SerializeReward(reward)
+	if err != nil {
+		return err
+	}
+	encryptedData, err := Encrypt([]byte(data), passphrase)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath, encryptedData, 0644)
+}
+
+// LoadEncryptedReward loads and decrypts the reward from a file
+func LoadEncryptedReward(passphrase, filepath string) (*Reward, error) {
+	encryptedData, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := Decrypt(encryptedData, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	return DeserializeReward(string(data))
 }

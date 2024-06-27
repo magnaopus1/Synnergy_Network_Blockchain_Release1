@@ -1,61 +1,89 @@
-package proof_of_work
+package consensus
 
 import (
-	"time"
-	"sync"
-	"math"
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+    "math/big"
+    "time"
+    "synthron-blockchain/pkg/synnergy_network/core/common"
 )
 
-// DifficultyAdjustmentManager handles the calculation and adjustment of mining difficulty.
-type DifficultyAdjustmentManager struct {
-	CurrentDifficulty  float64
-	TargetBlockTime    time.Duration
-	AdjustmentInterval int
-	mutex              sync.Mutex
-	lastAdjustmentBlock int
+// DifficultyManager manages the adjustment of mining difficulty.
+type DifficultyManager struct {
+    CurrentDifficulty *big.Int
+    TargetBlockTime   time.Duration
+    LastAdjustment    time.Time
 }
 
-// NewDifficultyAdjustmentManager initializes a new manager with default values.
-func NewDifficultyAdjustmentManager() *DifficultyAdjustmentManager {
-	return &DifficultyAdjustmentManager{
-		CurrentDifficulty:  1.0,  // Initial difficulty
-		TargetBlockTime:    10 * time.Minute,
-		AdjustmentInterval: 2016,
-		lastAdjustmentBlock: 0,
-	}
+// NewDifficultyManager initializes the difficulty manager with a predefined difficulty.
+func NewDifficultyManager(initialDifficulty *big.Int) *DifficultyManager {
+    return &DifficultyManager{
+        CurrentDifficulty: initialDifficulty,
+        TargetBlockTime:   10 * time.Minute, // Default target block time.
+        LastAdjustment:    time.Now(),
+    }
 }
 
-// CalculateDifficulty adjusts the difficulty based on the actual time to mine the last set of blocks.
-func (d *DifficultyAdjustmentManager) CalculateDifficulty(actualTime time.Duration, blockNumber int) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
+// CalculateNewDifficulty adjusts the difficulty based on the actual time taken to mine the last 2016 blocks.
+func (dm *DifficultyManager) CalculateNewDifficulty(actualTime, expectedTime time.Duration) {
+    ratio := float64(actualTime) / float64(expectedTime)
+    newDifficulty := float64(dm.CurrentDifficulty.Int64()) * ratio
 
-	if blockNumber - d.lastAdjustmentBlock < d.AdjustmentInterval {
-		return
-	}
+    // Apply dampening to avoid drastic changes in difficulty.
+    dampeningFactor := 0.25
+    newDifficulty = (newDifficulty * (1 - dampeningFactor)) + (float64(dm.CurrentDifficulty.Int64()) * dampeningFactor)
 
-	expectedTime := time.Duration(d.AdjustmentInterval) * d.TargetBlockTime
-	ratio := float64(actualTime) / float64(expectedTime)
-
-	if ratio < 1 {
-		d.CurrentDifficulty /= ratio  // Decrease difficulty if blocks were mined too quickly
-	} else {
-		d.CurrentDifficulty *= ratio  // Increase difficulty if blocks were mined too slowly
-	}
-
-	// Smoothing the difficulty adjustment to prevent drastic changes
-	d.CurrentDifficulty = math.Max(1, d.CurrentDifficulty)  // Ensure the difficulty never goes below 1
-
-	d.lastAdjustmentBlock = blockNumber
+    // Set the new difficulty with bounds check
+    if newDifficulty < 1 {
+        newDifficulty = 1
+    }
+    dm.CurrentDifficulty = big.NewInt(int64(newDifficulty))
+    dm.LastAdjustment = time.Now()
 }
 
-// GetDifficulty returns the current difficulty level.
-func (d *DifficultyAdjustmentManager) GetDifficulty() float64 {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
+// AdjustDifficulty dynamically adjusts difficulty every 2016 blocks.
+func (dm *DifficultyManager) AdjustDifficulty(blocks []common.Block) {
+    if len(blocks) < 2016 {
+        return // Not enough blocks to adjust, wait for more blocks.
+    }
 
-	return d.CurrentDifficulty
+    // Calculate the actual time for the last 2016 blocks.
+    actualTime := time.Duration(blocks[len(blocks)-1].Timestamp-blocks[0].Timestamp) * time.Second
+    expectedTime := dm.TargetBlockTime * 2016
+
+    dm.CalculateNewDifficulty(actualTime, expectedTime)
 }
 
-// Implementation of the difficulty adjustment would typically be triggered by a block event,
-// where the time taken to mine the last 2016 blocks is compared to the expected mining time.
+// SimulateBlockMining simulates the mining of blocks and adjusts difficulty based on the simulation.
+func (dm *DifficultyManager) SimulateBlockMining() {
+    var blocks []common.Block
+    for i := 0; i < 2016; i++ {
+        block := dm.MineBlock()
+        blocks = append(blocks, block)
+    }
+    dm.AdjustDifficulty(blocks)
+}
+
+// MineBlock simulates the mining of a single block, incorporating the current difficulty into the nonce calculation.
+func (dm *DifficultyManager) MineBlock() common.Block {
+    nonce := 0
+    for {
+        hash := calculateHashWithNonce(nonce, dm.CurrentDifficulty)
+        if hash[:len("0000")] == "0000" { // Simplified difficulty check, real implementation may vary
+            break
+        }
+        nonce++
+    }
+    return common.Block{
+        Timestamp: time.Now().Unix(),
+        Nonce:     nonce,
+    }
+}
+
+// calculateHashWithNonce simulates a hash calculation for the block mining process.
+func calculateHashWithNonce(nonce int, difficulty *big.Int) string {
+    data := fmt.Sprintf("%d:%s", nonce, difficulty.String())
+    hash := sha256.Sum256([]byte(data))
+    return hex.EncodeToString(hash[:])
+}

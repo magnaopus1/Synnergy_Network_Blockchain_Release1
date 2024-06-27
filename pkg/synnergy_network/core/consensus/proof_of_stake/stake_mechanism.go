@@ -1,149 +1,124 @@
-package proof_of_stake
+package consensus
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/json"
+	"errors"
 	"math/big"
+	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	"crypto/rand"
 )
 
-// Stakeholder defines an individual with the ability to stake tokens.
-type Stakeholder struct {
-	ID           string
-	Balance      *big.Int
-	StakedAmount *big.Int
+// StakeStore manages all staking operations and stores the stake details for each validator.
+type StakeStore struct {
+	stakes    map[string]*StakeDetail
+	lock      sync.RWMutex
+	minStake  *big.Int
+	alpha     float64
 }
 
-// StakingPool represents the collective staked tokens and their associated data.
-type StakingPool struct {
-	TotalStaked *big.Int
-	Stakeholders map[string]*Stakeholder
+// StakeDetail represents the details of a stake including the amount, start time, and lock-up duration.
+type StakeDetail struct {
+	Amount       *big.Int
+	StartTime    time.Time
+	LockUpPeriod time.Duration
 }
 
-// NewStakingPool initializes a new staking pool with empty stakeholders and total stake.
-func NewStakingPool() *StakingPool {
-	return &StakingPool{
-		TotalStaked: big.NewInt(0),
-		Stakeholders: make(map[string]*Stakeholder),
+// NewStakeStore creates a new instance of StakeStore with initialized values.
+func NewStakeStore(minStake *big.Int, alpha float64) *StakeStore {
+	return &StakeStore{
+		stakes:   make(map[string]*StakeDetail),
+		minStake: minStake,
+		alpha:    alpha,
 	}
 }
 
-// StakeTokens allows a stakeholder to stake a specified amount of tokens.
-func (sp *StakingPool) StakeTokens(stakeholderID string, amount *big.Int) error {
-	if amount.Sign() <= 0 {
-		return errors.New("invalid amount: staking amount must be positive")
+// AddStake initializes a new stake or updates an existing stake for a validator.
+func (s *StakeStore) AddStake(validatorID string, amount *big.Int) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if amount.Cmp(s.minStake) < 0 {
+		return errors.New("stake amount is less than the minimum required")
 	}
 
-	stakeholder, exists := sp.Stakeholders[stakeholderID]
-	if !exists {
-		stakeholder = &Stakeholder{
-			ID: stakeholderID,
-			Balance: big.NewInt(0),
-			StakedAmount: big.NewInt(0),
+	if stake, exists := s.stakes[validatorID]; exists {
+		stake.Amount.Add(stake.Amount, amount)
+	} else {
+		s.stakes[validatorID] = &StakeDetail{
+			Amount:       amount,
+			StartTime:    time.Now(),
+			LockUpPeriod: calculateLockUpPeriod(amount, s.alpha),
 		}
-		sp.Stakeholders[stakeholderID] = stakeholder
 	}
-
-	if stakeholder.Balance.Cmp(amount) < 0 {
-		return errors.New("insufficient balance to stake the specified amount")
-	}
-
-	stakeholder.Balance.Sub(stakeholder.Balance, amount)
-	stakeholder.StakedAmount.Add(stakeholder.StakedAmount, amount)
-	sp.TotalStaked.Add(sp.TotalStaked, amount)
-
 	return nil
 }
 
-// CalculateRewards computes the rewards for all stakeholders based on their staked tokens.
-func (sp *StakingPool) CalculateRewards(rewardRate float64) {
-	for _, stakeholder := range sp.Stakeholders {
-		reward := new(big.Float).Mul(new(big.Float).SetInt(stakeholder.StakedAmount), big.NewFloat(rewardRate))
-		rewardInt, _ := reward.Int(nil)
-		stakeholder.Balance.Add(stakeholder.Balance, rewardInt)
-	}
+// calculateLockUpPeriod determines the lock-up period based on the staked amount using a dynamic formula.
+func calculateLockUpPeriod(stakeAmount *big.Int, alpha float64) time.Duration {
+	// The base duration could be dynamically adjusted based on the stake amount and alpha value
+	baseDuration := time.Duration(90+int(alpha*30)) * 24 * time.Hour // Base lock-up period adjustment
+	return baseDuration
 }
 
-// UnstakeTokens allows a stakeholder to remove some or all of their staked tokens.
-func (sp *StakingPool) UnstakeTokens(stakeholderID string, amount *big.Int) error {
-	if amount.Sign() <= 0 {
-		return errors.New("invalid amount: unstaking amount must be positive")
-	}
+// RemoveStake handles the unstaking process, ensuring that lock-up periods are respected.
+func (s *StakeStore) RemoveStake(validatorID string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-	stakeholder, exists := sp.Stakeholders[stakeholderID]
+	stake, exists := s.stakes[validatorID]
 	if !exists {
-		return errors.New("stakeholder not found")
+		return errors.New("no stake found for validator")
 	}
 
-	if stakeholder.StakedAmount.Cmp(amount) < 0 {
-		return errors.New("attempting to unstake more than the current staked amount")
+	if time.Since(stake.StartTime) < stake.LockUpPeriod {
+		return errors.New("stake is still in the lock-up period")
 	}
 
-	stakeholder.StakedAmount.Sub(stakeholder.StakedAmount, amount)
-	stakeholder.Balance.Add(stakeholder.Balance, amount)
-	sp.TotalStaked.Sub(sp.TotalStaked, amount)
-
+	delete(s.stakes, validatorID)
 	return nil
 }
 
-// SerializeStakingPool encrypts and serializes the staking pool for secure storage.
-func (sp *StakingPool) SerializeStakingPool(encryptionKey []byte) ([]byte, error) {
-	data, err := json.Marshal(sp)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal staking pool")
+// GetStakeDetails returns the stake details for a specific validator.
+func (s *StakeStore) GetStakeDetails(validatorID string) (*StakeDetail, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	stake, exists := s.stakes[validatorID]
+	if !exists {
+		return nil, errors.New("no stake found for validator")
 	}
 
-	block, err := aes.NewCipher(encryptionKey)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cipher block")
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create GCM")
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, errors.Wrap(err, "failed to generate nonce")
-	}
-
-	encrypted := gcm.Seal(nonce, nonce, data, nil)
-	return encrypted, nil
+	return stake, nil
 }
 
-// DeserializeStakingPool decrypts and deserializes the staking pool.
-func DeserializeStakingPool(data, encryptionKey []byte) (*StakingPool, error) {
-	block, err := aes.NewCipher(encryptionKey)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cipher block")
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create GCM")
-	}
-
-	if len(data) < gcm.NonceSize() {
-		return nil, errors.New("invalid data size: too short")
-	}
-
-	nonce, ciphertext := data[:gcm.NonceSize()], data[gcm.NonceSize():]
-	decrypted, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to decrypt data")
-	}
-
-	var sp StakingPool
-	if err := json.Unmarshal(decrypted, &sp); err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal staking pool")
-	}
-
-	return &sp, nil
+// AdjustAlpha dynamically adjusts the alpha value based on market conditions and security needs.
+func (s *StakeStore) AdjustAlpha(newAlpha float64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.alpha = newAlpha
 }
 
-// Ensure this file provides comprehensive handling of stake mechanisms with rigorous error checking and robust encryption features.
+// SecureRandomStake selects a random stake detail securely for audit purposes or examples.
+func (s *StakeStore) SecureRandomStake() (*StakeDetail, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	keys := make([]string, 0, len(s.stakes))
+	for k := range s.stakes {
+		keys = append(keys, k)
+	}
+
+	if len(keys) == 0 {
+		return nil, errors.New("no stakes available")
+	}
+
+	// Secure random selection
+	index, err := rand.Int(rand.Reader, big.NewInt(int64(len(keys))))
+	if err != nil {
+		return nil, err
+	}
+
+	stake := s.stakes[keys[int(index.Int64())]]
+	return stake, nil
+}

@@ -1,80 +1,99 @@
-package proof_of_work
+package consensus
 
 import (
-    "crypto/rand"
-    "encoding/hex"
-    "math/big"
-    "sync"
-    "time"
-    "log"
-    
-    "golang.org/x/crypto/argon2"
+	"math/big"
+	"sync"
+	"time"
 )
 
-type SustainabilityIncentives struct {
-    blockchain        *Blockchain
-    rewardHalvingRate int
-    maxHalvings       int
-    blockReward       float64
-    halvingCounter    int
-    sync.Mutex
+// SustainabilityAndIncentives manages incentives and sustainability strategies for the blockchain.
+type SustainabilityAndIncentives struct {
+	Blockchain *Blockchain
+	lock       sync.Mutex
 }
 
-// NewSustainabilityIncentives initializes the module with default parameters and blockchain reference
-func NewSustainabilityIncentives(blockchain *Blockchain) *SustainabilityIncentives {
-    return &SustainabilityIncentives{
-        blockchain:        blockchain,
-        rewardHalvingRate: 200000,
-        maxHalvings:       10, // Adjusted for real-world application
-        blockReward:       1252, // Initial block reward in SYN tokens
-        halvingCounter:    0,
-    }
+// NewSustainabilityAndIncentives creates a new instance to manage sustainability and incentives.
+func NewSustainabilityAndIncentives(blockchain *Blockchain) *SustainabilityAndIncentives {
+	return &SustainabilityAndIncentives{
+		Blockchain: blockchain,
+	}
 }
 
-// CalculateReward adjusts the mining reward based on block height
-func (si *SustainabilityIncentives) CalculateReward() float64 {
-    si.Lock()
-    defer si.Unlock()
+// AdjustBlockReward dynamically adjusts the block reward based on the block height to control inflation and ensure sustainability.
+func (sai *SustainabilityAndIncentives) AdjustBlockReward(blockHeight int64) {
+	sai.lock.Lock()
+	defer sai.lock.Unlock()
 
-    blocksMined := len(si.blockchain.Chain)
-    halvings := blocksMined / si.rewardHalvingRate
+	halvingInterval := int64(200000) // Halving every 200,000 blocks
+	initialReward := big.NewInt(1252) // Initial block reward in SYN
 
-    if halvings > si.maxHalvings {
-        return 0 // No reward if max halvings reached
-    }
-
-    // Adjust reward and increment halving counter if threshold reached
-    if blocksMined%si.rewardHalvingRate == 0 && blocksMined > 0 {
-        si.blockReward /= 2
-        si.halvingCounter++
-        log.Printf("Reward halved to %f SYN after %d blocks", si.blockReward, blocksMined)
-    }
-
-    return si.blockReward
+	reductionFactor := blockHeight / halvingInterval
+	if reductionFactor > 0 {
+		// Calculate the new reward after every halving period
+		newReward := new(big.Int).Rsh(initialReward, uint(reductionFactor)) // Halving reward
+		if newReward.Cmp(big.NewInt(1)) >= 0 {
+			sai.Blockchain.Reward.Set(newReward)
+		} else {
+			// Minimum reward threshold
+			sai.Blockchain.Reward.Set(big.NewInt(1))
+		}
+	}
 }
 
-// MonitorNetworkHealth checks for network stability and adjusts difficulty as needed
-func (si *SustainabilityIncentives) MonitorNetworkHealth() {
-    ticker := time.NewTicker(time.Minute * 10) // Check every 10 minutes
-    defer ticker.Stop()
+// ImplementEnergyEfficientMining introduces algorithms that reduce the power consumption of mining operations.
+func (sai *SustainabilityAndIncentives) ImplementEnergyEfficientMining() {
+    // Adjust the proof-of-work algorithm to include energy-efficient hash computations.
+    sai.Blockchain.SetMiningAlgorithm("argon2") // Example of setting Argon2 as it is memory-hard and can discourage energy-intensive ASIC mining.
+}
 
-    for range ticker.C {
-        if len(si.blockchain.Chain) < 2 {
-            continue
+// EnhanceMinerIncentives increases incentives for miners to ensure their continued participation.
+func (sai *SustainabilityAndIncentives) EnhanceMinerIncentives() {
+    // Implement a loyalty program that provides additional SYN tokens to miners based on their duration of participation.
+    for address, duration := range sai.Blockchain.MinerDurations {
+        if duration > 5 * 365 * 24 * 60 * 60 { // More than 5 years
+            // Grant additional rewards
+            bonus := big.NewInt(100) // 100 SYN bonus
+            sai.Blockchain.AddReward(address, bonus)
         }
-
-        lastBlockTime := si.blockchain.Chain[len(si.blockchain.Chain)-1].Timestamp
-        timeSinceLastBlock := time.Since(lastBlockTime)
-
-        // Simplified example: Adjust difficulty if time since last block is too high or low
-        if timeSinceLastBlock < time.Minute*8 { // Less than target time, increase difficulty
-            si.blockchain.Difficulty++
-        } else if timeSinceLastBlock > time.Minute*12 { // More than target time, decrease difficulty
-            si.blockchain.Difficulty--
-        }
-
-        log.Printf("Difficulty adjusted to %d due to mining time variations", si.blockchain.Difficulty)
     }
 }
 
-// Implement additional functions to support energy-efficient mining practices and further enhance security measures
+// MonitorAndAdjust continuously monitors and adjusts parameters to adapt to real-time network conditions and miner feedback.
+func (sai *SustainabilityAndIncentives) MonitorAndAdjust() {
+    // Continuously monitor the block time and adjust difficulty accordingly
+    sai.Blockchain.AdjustDifficultyBasedOnTime()
+}
+
+// LogSustainabilityMetrics logs important metrics for assessing the sustainability of the blockchain network.
+func (sai *SustainabilityAndIncentives) LogSustainabilityMetrics() {
+    // Log key sustainability metrics
+    fmt.Printf("Energy Consumption: %v\n", sai.Blockchain.CurrentEnergyConsumption())
+    fmt.Printf("Reward Distribution: %v\n", sai.Blockchain.RewardDistribution())
+    fmt.Printf("Active Miners: %d\n", len(sai.Blockchain.ActiveMiners()))
+}
+
+// EncourageCommunityParticipation increases the engagement of the community in blockchain governance.
+func (sai *SustainabilityAndIncentives) EncourageCommunityParticipation() {
+    // Develop platforms for community voting on pivotal network changes like reward structure and protocol upgrades.
+    sai.Blockchain.InitiateVotingMechanism()
+}
+
+// ImplementProofOfWorkEnhancements optimizes the proof-of-work mechanism to align with sustainability goals.
+func (sai *SustainabilityAndIncentives) ImplementProofOfWorkEnhancements() {
+    // Modify the PoW algorithm to ensure it is less energy-consuming while maintaining network security.
+    sai.Blockchain.UpdateProofOfWorkAlgorithm("low-energy-hash") // Placeholder for an actual algorithm implementation.
+}
+
+// PeriodicSustainabilityReviews conducts regular reviews to assess and improve the sustainability practices of the blockchain.
+func (sai *SustainabilityAndIncentives) PeriodicSustainabilityReviews() {
+    // Conduct quarterly sustainability audits to identify areas for improvement.
+    sai.Blockchain.ScheduleAudit("Quarterly", sai.EvaluateSustainabilityMetrics)
+}
+
+// EvaluateSustainabilityMetrics is a helper function to assess various sustainability metrics.
+func (sai *SustainabilityAndIncentives) EvaluateSustainabilityMetrics() {
+    energyUsage := sai.Blockchain.CalculateTotalEnergyUsage()
+    carbonFootprint := sai.Blockchain.EstimateCarbonFootprint()
+    fmt.Printf("Total Energy Usage: %v, Estimated Carbon Footprint: %v\n", energyUsage, carbonFootprint)
+}
+

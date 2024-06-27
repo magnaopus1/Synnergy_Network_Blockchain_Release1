@@ -1,87 +1,73 @@
-package proof_of_stake
+package consensus
 
 import (
-	"math"
-	"time"
-
-	"github.com/synthron/synthronchain/crypto"
+    "math"
+    "time"
 )
 
-type StakingParameters struct {
-	MinimumStake        float64
-	Alpha               float64
-	CirculatingSupply   float64
-	TotalTransactions   int64
-	VolatilityIndex     float64
-	ParticipationRate   float64
-	EconomicStability   float64
-	NormalizationFactor float64
+// Constants for adjusting difficulty and alpha dynamically
+const (
+    DefaultAlphaAdjustmentFactor = 0.05
+    HighVolatilityThreshold      = 0.1
+    LowVolatilityThreshold       = 0.05
+    MinAlpha                     = 0.005
+    MaxAlpha                     = 0.015
+)
+
+// DifficultySetting stores parameters for the PoS difficulty setting
+type DifficultySetting struct {
+    CurrentMiningReward float64
+    CirculatingSupply   float64
+    TransactionVolume   float64
+    Alpha               float64
+    LastAdjustmentTime  time.Time
 }
 
-type PoSInitialDifficulty struct {
-	StakingParams StakingParameters
-	Blockchain    *PoSBlockchain
+// NewDifficultySetting initializes the difficulty setting with economic indicators
+func NewDifficultySetting(reward, supply, volume, alpha float64) *DifficultySetting {
+    return &DifficultySetting{
+        CurrentMiningReward: reward,
+        CirculatingSupply:   supply,
+        TransactionVolume:   volume,
+        Alpha:               alpha,
+        LastAdjustmentTime:  time.Now(),
+    }
 }
 
-func NewPoSInitialDifficulty(blockchain *PoSBlockchain) *PoSInitialDifficulty {
-	return &PoSInitialDifficulty{
-		Blockchain: blockchain,
-		StakingParams: StakingParameters{
-			NormalizationFactor: 0.01, // Example value
-		},
-	}
+// CalculateMinimumStake calculates the minimum stake required using the formula from the whitepaper
+func (ds *DifficultySetting) CalculateMinimumStake() float64 {
+    return (ds.TransactionVolume * ds.CurrentMiningReward / ds.CirculatingSupply) * ds.Alpha
 }
 
-// CalculateAlpha dynamically adjusts alpha based on current network and market conditions.
-func (pid *PoSInitialDifficulty) CalculateAlpha() float64 {
-	v := pid.StakingParams.VolatilityIndex
-	p := pid.StakingParams.ParticipationRate
-	e := pid.StakingParams.EconomicStability
-
-	alpha := (v + p + e) / 3 * pid.StakingParams.NormalizationFactor
-	return alpha
+// AdjustDifficulty adjusts the difficulty based on transaction volume and market conditions
+func (ds *DifficultySetting) AdjustDifficulty(newVolume float64, marketConditions MarketConditions) {
+    ds.Alpha = ds.calculateAlpha(marketConditions.VolatilityIndex)
+    ds.TransactionVolume = newVolume
+    ds.LastAdjustmentTime = time.Now()
 }
 
-// UpdateStakingParameters updates the parameters used to calculate the minimum stake.
-func (pid *PoSInitialDifficulty) UpdateStakingParameters(currentReward float64, transactions int64, supply float64) {
-	pid.StakingParams.CirculatingSupply = supply
-	pid.StakingParams.TotalTransactions = transactions
-	alpha := pid.CalculateAlpha()
-	pid.StakingParams.MinimumStake = (currentReward * supply / float64(transactions)) * alpha
+// calculateAlpha dynamically calculates the new Alpha value based on market volatility and other conditions
+func (ds *DifficultySetting) calculateAlpha(volatility float64) float64 {
+    // Adjust alpha based on a volatility index and check against bounds
+    adjustment := volatility * DefaultAlphaAdjustmentFactor
+    if volatility > HighVolatilityThreshold {
+        ds.Alpha += adjustment
+    } else if volatility < LowVolatilityThreshold {
+        ds.Alpha -= adjustment
+    }
+
+    // Ensure alpha stays within specified bounds
+    if ds.Alpha < MinAlpha {
+        ds.Alpha = MinAlpha
+    } else if ds.Alpha > MaxAlpha {
+        ds.Alpha = MaxAlpha
+    }
+    return ds.Alpha
 }
 
-// CalculateInitialDifficulty determines the initial difficulty based on the blockchain's current state.
-func (pid *PoSInitialDifficulty) CalculateInitialDifficulty() {
-	totalStaked := 0.0
-	for _, stake := range pid.Blockchain.Stakes {
-		totalStaked += stake.Amount
-	}
-	difficulty := math.Log(totalStaked+1) // Logarithmic scale for difficulty calculation
-	pid.Blockchain.Difficulty = uint32(difficulty)
+// MarketConditions struct to encapsulate various dynamic metrics affecting the blockchain
+type MarketConditions struct {
+    VolatilityIndex float64
 }
 
-// LockUpEnforcement manages the lock-up period for staked assets.
-func (pid *PoSInitialDifficulty) LockUpEnforcement() {
-	now := time.Now()
-	for i, stake := range pid.Blockchain.Stakes {
-		if now.Before(stake.StartTime.Add(stake.LockDuration)) {
-			continue
-		}
-		// Free up staked tokens after lock-up period
-		pid.Blockchain.Stakes[i].Owner = ""
-	}
-}
 
-func main() {
-	blockchain := NewPoSBlockchain()
-	initialDifficulty := NewPoSInitialDifficulty(blockchain)
-
-	// Simulating an update in staking parameters based on network data
-	initialDifficulty.UpdateStakingParameters(500.0, 10000, 1000000.0)
-
-	// Calculating initial difficulty based on updated staking parameters
-	initialDifficulty.CalculateInitialDifficulty()
-
-	// Enforcing lock-up periods
-	initialDifficulty.LockUpEnforcement()
-}

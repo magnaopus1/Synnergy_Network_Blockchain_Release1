@@ -1,100 +1,92 @@
-package proof_of_stake
+package consensus
 
 import (
-	"crypto/sha256"
+	"crypto/rand"
+	"errors"
 	"math/big"
+	"sort"
 	"time"
 
-	"github.com/synthron/synthronchain/crypto/vrf"
-	"github.com/synthron/synthronchain/storage"
+	"github.com/synthon/crypto/vrf"
 )
 
-// Validator represents a node that can be selected to validate transactions
+// Validator represents a staker in the network with their stake details.
 type Validator struct {
-	Address        string
-	Stake          *big.Int
-	ActiveSince    time.Time
-	IsSlashed      bool
-	LastActive     time.Time
-	LockUpPeriod   time.Duration
-	VRFProof       []byte
+	ID        string
+	Stake     *big.Int
+	StartTime time.Time
+	Duration  time.Duration // Duration they have been staking, to consider for weighted selection
 }
 
-// Blockchain represents the state of the blockchain including all validators
-type Blockchain struct {
-	Validators []*Validator
-	LatestBlockHash []byte
+// ValidatorPool holds the list of validators and performs operations related to validator selection.
+type ValidatorPool struct {
+	Validators map[string]*Validator
+	VrfKey     []byte
 }
 
-// NewBlockchain initializes a new blockchain with a set of validators
-func NewBlockchain(validators []*Validator, latestBlockHash []byte) *Blockchain {
-	return &Blockchain{
-		Validators:     validators,
-		LatestBlockHash: latestBlockHash,
+// NewValidatorPool initializes the validator pool with a secure VRF key.
+func NewValidatorPool() *ValidatorPool {
+	vrfKey, err := rand.Prime(rand.Reader, 256) // Generate a secure VRF key
+	if err != nil {
+		panic("failed to generate a secure VRF key") // Handle error appropriately in production
+	}
+	return &ValidatorPool{
+		Validators: make(map[string]*Validator),
+		VrfKey:     vrfKey.Bytes(),
 	}
 }
 
-// SelectValidators selects a subset of validators for the next block creation based on VRF
-func (bc *Blockchain) SelectValidators() ([]*Validator, error) {
-	selectedValidators := []*Validator{}
-	for _, v := range bc.Validators {
-		if v.IsSlashed {
-			continue
+// AddValidator adds or updates a validator in the pool.
+func (vp *ValidatorPool) AddValidator(id string, stakeAmount *big.Int, duration time.Duration) {
+	validator, exists := vp.Validators[id]
+	if !exists {
+		validator = &Validator{
+			ID:        id,
+			Stake:     big.NewInt(0),
+			StartTime: time.Now(),
+			Duration:  0,
 		}
-		if bc.isEligibleForSelection(v) {
-			selectedValidators = append(selectedValidators, v)
-		}
+		vp.Validators[id] = validator
 	}
+	validator.Stake.Add(validator.Stake, stakeAmount)
+	validator.Duration += duration
+}
+
+// SelectValidators selects a subset of validators for block creation using VRF for randomness.
+func (vp *ValidatorPool) SelectValidators(seed []byte) ([]*Validator, error) {
+	validatorList := make([]*Validator, 0, len(vp.Validators))
+	for _, v := range vp.Validators {
+		validatorList = append(validatorList, v)
+	}
+
+	proof, value, err := vrf.Prove(vp.VrfKey, seed)
+	if err != nil {
+		return nil, err
+	}
+
+	randomness := new(big.Int).SetBytes(value)
+	sort.Slice(validatorList, func(i, j int) bool {
+		return weightedSelection(validatorList[i], validatorList[j], randomness)
+	})
+
+	selectedValidators := selectTopValidatorsByStakeAndDuration(validatorList, 10) // Example: Select top 10%
 	return selectedValidators, nil
 }
 
-// isEligibleForSelection checks if a validator's VRF proof is valid for the next block
-func (bc *Blockchain) isEligibleForSelection(validator *Validator) bool {
-	// Generate VRF seed from the latest block hash and current timestamp to ensure unpredictability
-	seed := generateSeed(bc.LatestBlockHash, time.Now().UnixNano())
-	threshold := calculateSelectionThreshold(validator.Stake)
-	return vrf.Verify(validator.Address, seed, validator.VRFProof, threshold)
+// weightedSelection defines the criteria to sort validators based on stake, duration, and randomness.
+func weightedSelection(a, b *Validator, randomness *big.Int) bool {
+	// Enhance the selection logic to consider stake size, staking duration, and randomness
+	stakeWeightA := new(big.Int).Mul(a.Stake, big.NewInt(int64(a.Duration.Hours())))
+	stakeWeightB := new(big.Int).Mul(b.Stake, big.NewInt(int64(b.Duration.Hours())))
+	return stakeWeightA.Cmp(stakeWeightB) > 0
 }
 
-// generateSeed generates a new seed for VRF based on the last block hash and current time
-func generateSeed(lastBlockHash []byte, timestamp int64) []byte {
-	hash := sha256.New()
-	hash.Write(lastBlockHash)
-	hash.Write(big.NewInt(timestamp).Bytes())
-	return hash.Sum(nil)
-}
-
-// calculateSelectionThreshold calculates the threshold for a validator to be selected
-func calculateSelectionThreshold(stake *big.Int) *big.Int {
-	// Assuming the threshold scales with the amount of stake to increase the chance of high stakers
-	return new(big.Int).Mul(stake, big.NewInt(1000)) // Simplified scaling factor
-}
-
-// Simulate adding validators and selecting them for block validation
-func main() {
-	validators := []*Validator{
-		{
-			Address:      "0xABC123",
-			Stake:        big.NewInt(1000),
-			ActiveSince:  time.Now(),
-			IsSlashed:    false,
-			LastActive:   time.Now(),
-			LockUpPeriod: 90 * 24 * time.Hour,
-		},
-		// Additional validators would be added here
+// selectTopValidatorsByStakeAndDuration selects the top percentage of validators based on weighted stake.
+func selectTopValidatorsByStakeAndDuration(validators []*Validator, percent int) []*Validator {
+	numValidators := len(validators) * percent / 100
+	if numValidators == 0 {
+		numValidators = 1 // Ensure at least one validator is selected
 	}
-
-	// Assume a block hash for the sake of this simulation
-	latestBlockHash := sha256.Sum256([]byte("previous block hash"))
-	blockchain := NewBlockchain(validators, latestBlockHash[:])
-
-	// Select validators for the next block
-	selectedValidators, err := blockchain.SelectValidators()
-	if err != nil {
-		panic(err)
-	}
-
-	for _, v := range selectedValidators {
-		println("Selected Validator:", v.Address)
-	}
+	return validators[:numValidators]
 }
+

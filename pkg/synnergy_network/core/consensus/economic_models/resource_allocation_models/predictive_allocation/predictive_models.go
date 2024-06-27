@@ -1,133 +1,133 @@
 package predictive_allocation
 
 import (
-	"fmt"
 	"math"
-	"math/big"
 	"sync"
 	"time"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/smart_contract"
-	"github.com/synthron_blockchain_final/pkg/layer0/core/transaction"
 )
 
-// Predictor interface defines the methods for predictive resource allocation
-type Predictor interface {
-	Predict(transaction.Transaction) *big.Int
-	Update(transaction.Transaction)
+// ResourceForecast represents the resource forecast data structure
+type ResourceForecast struct {
+	NodeID      string
+	Allocated   int
+	Predicted   int
+	Confidence  float64
+	LastUpdated time.Time
 }
 
-// SimpleMovingAveragePredictor implements a simple moving average for prediction
-type SimpleMovingAveragePredictor struct {
-	sync.Mutex
-	windowSize int
-	values     []int64
+// NetworkState represents the current state of the network
+type NetworkState struct {
+	mu        sync.Mutex
+	Nodes     map[string]*ResourceForecast
+	TotalLoad int
 }
 
-// NewSimpleMovingAveragePredictor creates a new instance of SimpleMovingAveragePredictor
-func NewSimpleMovingAveragePredictor(windowSize int) *SimpleMovingAveragePredictor {
-	return &SimpleMovingAveragePredictor{
-		windowSize: windowSize,
-		values:     make([]int64, 0, windowSize),
+// NewNetworkState initializes a new NetworkState
+func NewNetworkState() *NetworkState {
+	return &NetworkState{
+		Nodes:     make(map[string]*ResourceForecast),
+		TotalLoad: 0,
 	}
 }
 
-// Predict predicts the future resource requirement based on past data
-func (sma *SimpleMovingAveragePredictor) Predict(tx transaction.Transaction) *big.Int {
-	sma.Lock()
-	defer sma.Unlock()
+// UpdateNodeLoad updates the current load and prediction for a node
+func (n *NetworkState) UpdateNodeLoad(nodeID string, load int, confidence float64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 
-	if len(sma.values) == 0 {
-		return big.NewInt(0)
-	}
-
-	sum := int64(0)
-	for _, value := range sma.values {
-		sum += value
-	}
-
-	average := sum / int64(len(sma.values))
-	return big.NewInt(average)
-}
-
-// Update updates the predictor with new transaction data
-func (sma *SimpleMovingAveragePredictor) Update(tx transaction.Transaction) {
-	sma.Lock()
-	defer sma.Unlock()
-
-	if len(sma.values) >= sma.windowSize {
-		sma.values = sma.values[1:]
-	}
-
-	sma.values = append(sma.values, tx.GasLimit.Int64())
-}
-
-// ResourceAllocator manages resource allocation based on predictions
-type ResourceAllocator struct {
-	sync.Mutex
-	predictor Predictor
-	allocated map[string]*big.Int
-}
-
-// NewResourceAllocator creates a new instance of ResourceAllocator
-func NewResourceAllocator(predictor Predictor) *ResourceAllocator {
-	return &ResourceAllocator{
-		predictor: predictor,
-		allocated: make(map[string]*big.Int),
-	}
-}
-
-// AllocateResources allocates resources to a transaction based on predictions
-func (ra *ResourceAllocator) AllocateResources(tx transaction.Transaction) (*big.Int, error) {
-	ra.Lock()
-	defer ra.Unlock()
-
-	prediction := ra.predictor.Predict(tx)
-	if prediction.Cmp(big.NewInt(0)) == 0 {
-		return nil, fmt.Errorf("failed to predict resources for transaction %s", tx.ID)
-	}
-
-	ra.allocated[tx.ID] = prediction
-	return prediction, nil
-}
-
-// UpdatePredictor updates the predictor with new transaction data
-func (ra *ResourceAllocator) UpdatePredictor(tx transaction.Transaction) {
-	ra.Lock()
-	defer ra.Unlock()
-
-	ra.predictor.Update(tx)
-}
-
-// GetAllocatedResources returns the allocated resources for a transaction
-func (ra *ResourceAllocator) GetAllocatedResources(txID string) (*big.Int, error) {
-	ra.Lock()
-	defer ra.Unlock()
-
-	allocated, exists := ra.allocated[txID]
+	node, exists := n.Nodes[nodeID]
 	if !exists {
-		return nil, fmt.Errorf("no resources allocated for transaction %s", txID)
+		node = &ResourceForecast{NodeID: nodeID}
+		n.Nodes[nodeID] = node
 	}
 
-	return allocated, nil
+	node.Allocated = load
+	node.Predicted = int(math.Round(float64(load) * (1 + confidence)))
+	node.Confidence = confidence
+	node.LastUpdated = time.Now()
+	n.TotalLoad += load
 }
 
-// Example usage
-func main() {
-	predictor := NewSimpleMovingAveragePredictor(10)
-	allocator := NewResourceAllocator(predictor)
+// PredictiveAllocation allocates resources based on predictions
+func (n *NetworkState) PredictiveAllocation(totalResources int) map[string]int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 
-	tx1 := transaction.Transaction{ID: "tx1", GasLimit: big.NewInt(100)}
-	tx2 := transaction.Transaction{ID: "tx2", GasLimit: big.NewInt(200)}
+	allocation := make(map[string]int)
+	totalPredicted := 0
 
-	allocator.UpdatePredictor(tx1)
-	allocator.UpdatePredictor(tx2)
-
-	allocated, err := allocator.AllocateResources(tx1)
-	if err != nil {
-		fmt.Println("Error allocating resources:", err)
-		return
+	for _, node := range n.Nodes {
+		totalPredicted += node.Predicted
 	}
 
-	fmt.Printf("Allocated resources for tx1: %s\n", allocated.String())
+	for id, node := range n.Nodes {
+		allocation[id] = int(math.Round(float64(node.Predicted) / float64(totalPredicted) * float64(totalResources)))
+	}
+
+	return allocation
 }
+
+// RemoveNode removes a node from the network state
+func (n *NetworkState) RemoveNode(nodeID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.Nodes, nodeID)
+}
+
+// GetNodeForecast returns the resource forecast for a node
+func (n *NetworkState) GetNodeForecast(nodeID string) (*ResourceForecast, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	node, exists := n.Nodes[nodeID]
+	return node, exists
+}
+
+// ListNodeForecasts lists all node forecasts
+func (n *NetworkState) ListNodeForecasts() []*ResourceForecast {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	forecasts := []*ResourceForecast{}
+	for _, forecast := range n.Nodes {
+		forecasts = append(forecasts, forecast)
+	}
+	return forecasts
+}
+
+// EconomicModel represents an economic model for predictive resource allocation
+type EconomicModel struct {
+	networkState *NetworkState
+}
+
+// NewEconomicModel initializes a new EconomicModel
+func NewEconomicModel() *EconomicModel {
+	return &EconomicModel{
+		networkState: NewNetworkState(),
+	}
+}
+
+// AllocateResourcesBasedOnPredictions allocates resources based on predictions and network state
+func (e *EconomicModel) AllocateResourcesBasedOnPredictions(totalResources int) map[string]int {
+	return e.networkState.PredictiveAllocation(totalResources)
+}
+
+// UpdateNetworkLoad updates the network load and predictions
+func (e *EconomicModel) UpdateNetworkLoad(nodeID string, load int, confidence float64) {
+	e.networkState.UpdateNodeLoad(nodeID, load, confidence)
+}
+
+// RemoveNetworkNode removes a node from the network
+func (e *EconomicModel) RemoveNetworkNode(nodeID string) {
+	e.networkState.RemoveNode(nodeID)
+}
+
+// GetNetworkNodeForecast returns the forecast for a specific node
+func (e *EconomicModel) GetNetworkNodeForecast(nodeID string) (*ResourceForecast, bool) {
+	return e.networkState.GetNodeForecast(nodeID)
+}
+
+// ListNetworkNodeForecasts lists all node forecasts in the network
+func (e *EconomicModel) ListNetworkNodeForecasts() []*ResourceForecast {
+	return e.networkState.ListNodeForecasts()
+}
+
+

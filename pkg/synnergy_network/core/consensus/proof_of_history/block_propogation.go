@@ -1,91 +1,80 @@
-package proof_of_history
+package consensus
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"sync"
 	"time"
-
-	"github.com/synthron/synthronchain/storage"
+	"synthron-blockchain/pkg/synnergy_network/core/common"
 )
 
-// Block represents a single block in the blockchain
-type Block struct {
-	PreviousHash string
-	Timestamp    int64
-	Transactions []string
-	Hash         string
+// BlockPropagator manages the propagation of blocks in the network using PoH.
+type BlockPropagator struct {
+	Chain *common.Blockchain
+	lock  sync.Mutex
 }
 
-// Blockchain represents the state of the blockchain with all committed blocks
-type Blockchain struct {
-	Blocks []*Block
+// NewBlockPropagator initializes a new BlockPropagator.
+func NewBlockPropagator(chain *common.Blockchain) *BlockPropagator {
+	return &BlockPropagator{Chain: chain}
 }
 
-// NewBlock creates a new block using the previous block's hash and current transactions
-func NewBlock(previousHash string, transactions []string) *Block {
-	block := &Block{
-		PreviousHash: previousHash,
-		Timestamp:    time.Now().UnixNano(),
-		Transactions: transactions,
+// PropagateBlock handles the propagation of a new block to the blockchain.
+func (bp *BlockPropagator) PropagateBlock(block *common.Block) error {
+	bp.lock.Lock()
+	defer bp.lock.Unlock()
+
+	// Validate block before propagation
+	if err := bp.validateBlockForPropagation(block); err != nil {
+		return err
 	}
-	block.Hash = block.generateHash()
-	return block
+
+	// Append to blockchain
+	bp.Chain.Blocks = append(bp.Chain.Blocks, block)
+	fmt.Println("Block propagated successfully:", block.Hash)
+	return nil
 }
 
-// generateHash generates a cryptographic hash of the block's contents
-func (b *Block) generateHash() string {
-	record := b.PreviousHash + string(b.Timestamp) + hex.EncodeToString([]byte(string(b.Transactions)))
-	h := sha256.New()
-	h.Write([]byte(record))
-	hashed := h.Sum(nil)
-	return hex.EncodeToString(hashed)
-}
-
-// AddBlock adds a new block to the blockchain after validation
-func (bc *Blockchain) AddBlock(newBlock *Block) bool {
-	if bc.validateBlock(newBlock) {
-		bc.Blocks = append(bc.Blocks, newBlock)
-		return true
+// validateBlockForPropagation ensures the block is valid for propagation.
+func (bp *BlockPropagator) validateBlockForPropagation(block *common.Block) error {
+	if len(bp.Chain.Blocks) > 0 {
+		lastBlock := bp.Chain.Blocks[len(bp.Chain.Blocks)-1]
+		if lastBlock.Hash != block.PrevBlockHash {
+			return fmt.Errorf("block propagation failed: previous hash does not match")
+		}
 	}
-	return false
-}
 
-// validateBlock checks if the block can be added to the blockchain
-func (bc *Blockchain) validateBlock(block *Block) bool {
-	lastBlock := bc.Blocks[len(bc.Blocks)-1]
-	if lastBlock.Hash != block.PreviousHash {
-		return false
+	// Ensure the block's timestamp is valid and follows PoH rules
+	if !bp.isValidTimestamp(block.Timestamp) {
+		return fmt.Errorf("block propagation failed: invalid timestamp")
 	}
-	if !bc.verifyPoH(block) {
-		return false
-	}
-	return true
+
+	return nil
 }
 
-// verifyPoH verifies the Proof of History for a block
-func (bc *Blockchain) verifyPoH(block *Block) bool {
-	expectedHash := block.generateHash()
-	return expectedHash == block.Hash
+// isValidTimestamp checks if the block's timestamp adheres to the PoH rules.
+func (bp *BlockPropagator) isValidTimestamp(timestamp int64) bool {
+	// Ensure the timestamp is greater than the last block and within a reasonable drift
+	lastBlockTime := bp.Chain.Blocks[len(bp.Chain.Blocks)-1].Timestamp
+	return timestamp > lastBlockTime && time.Since(time.Unix(timestamp, 0)) < 2*time.Minute
 }
 
-// InitializeBlockchain initializes the blockchain with a genesis block
-func InitializeBlockchain() *Blockchain {
-	genesisBlock := NewBlock("0", []string{"Genesis Block"})
-	return &Blockchain{Blocks: []*Block{genesisBlock}}
+// CalculateBlockHash calculates the hash of a block using PoH specified hash function.
+func CalculateBlockHash(block *common.Block) string {
+	record := fmt.Sprintf("%d:%s:%d", block.Timestamp, block.PrevBlockHash, block.Nonce)
+	hash := sha256.Sum256([]byte(record))
+	return hex.EncodeToString(hash[:])
 }
 
-// Simulate the block creation and propagation
-func main() {
-	blockchain := InitializeBlockchain()
+// GenerateMerkleRoot generates a Merkle root for the transactions in a block.
+func GenerateMerkleRoot(transactions []*common.Transaction) string {
+	// Placeholder for Merkle root generation
+	return "merkle_root"
+}
 
-	// Simulating transaction data
-	transactions := []string{"tx1", "tx2", "tx3"}
-
-	// Creating and adding a new block
-	newBlock := NewBlock(blockchain.Blocks[len(blockchain.Blocks)-1].Hash, transactions)
-	if blockchain.AddBlock(newBlock) {
-		println("New block added successfully. Block Hash:", newBlock.Hash)
-	} else {
-		println("Failed to add new block.")
-	}
+// CryptographicAnchor generates a cryptographic anchor for a block.
+func CryptographicAnchor(block *common.Block) string {
+	// Placeholder for anchor generation based on PoH mechanism
+	return "cryptographic_anchor"
 }

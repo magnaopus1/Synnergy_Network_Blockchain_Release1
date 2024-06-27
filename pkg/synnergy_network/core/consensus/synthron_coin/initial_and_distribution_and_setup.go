@@ -1,75 +1,106 @@
 package synthron_coin
 
 import (
-	"fmt"
-	"log"
-	"os"
-
-	"github.com/pkg/errors"
+	"errors"
+	"time"
 )
 
-// Logger setup for the application.
-var logger = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
-
-// GenesisBlock represents the initial block in the blockchain with a special transaction.
-type GenesisBlock struct {
-	InitialCoins   float64
-	CreatorsWallet string
+// Wallet struct to represent a wallet in the system
+type Wallet struct {
+	Address string
+	Balance float64
 }
 
-// CoinDistributionManager manages the distribution and initial setup of Synthron Coins.
-type CoinDistributionManager struct {
-	genesisBlock GenesisBlock
-	totalSupply  float64
-	maxSupply    float64
+// Distribution struct to hold all distribution wallets
+type Distribution struct {
+	GenesisWallet                Wallet
+	InternalDevelopmentWallet    Wallet
+	ExternalCharitableWallet     Wallet
+	InternalCharitableWallet     Wallet
+	LoanPoolWallet               Wallet
+	PassiveIncomeWallet          Wallet
+	NodeHostDistributionWallet   Wallet
+	CreatorWallet                Wallet
 }
 
-// NewCoinDistributionManager initializes the manager with genesis block and supply details.
-func NewCoinDistributionManager(initialCoins float64, creatorsWallet string, maxSupply float64) *CoinDistributionManager {
-	return &CoinDistributionManager{
-		genesisBlock: GenesisBlock{
-			InitialCoins:   initialCoins,
-			CreatorsWallet: creatorsWallet,
+// InitialSetup struct to hold the initial setup information
+type InitialSetup struct {
+	GenesisBlockCreated bool
+	InitialGenesisBlockTimestamp time.Time
+	Distribution         Distribution
+	TotalSupply          float64
+}
+
+// NewInitialSetup initializes a new InitialSetup structure.
+func NewInitialSetup(totalSupply float64) *InitialSetup {
+	return &InitialSetup{
+		GenesisBlockCreated:         false,
+		InitialGenesisBlockTimestamp: time.Time{},
+		Distribution: Distribution{
+			GenesisWallet:                Wallet{Address: "genesis_wallet", Balance: 5000000},
+			InternalDevelopmentWallet:    Wallet{Address: "internal_dev_wallet", Balance: 0},
+			ExternalCharitableWallet:     Wallet{Address: "external_charity_wallet", Balance: 0},
+			InternalCharitableWallet:     Wallet{Address: "internal_charity_wallet", Balance: 0},
+			LoanPoolWallet:               Wallet{Address: "loan_pool_wallet", Balance: 0},
+			PassiveIncomeWallet:          Wallet{Address: "passive_income_wallet", Balance: 0},
+			NodeHostDistributionWallet:   Wallet{Address: "node_host_wallet", Balance: 0},
+			CreatorWallet:                Wallet{Address: "creator_wallet", Balance: 0},
 		},
-		totalSupply: initialCoins,
-		maxSupply:   maxSupply,
+		TotalSupply: totalSupply,
 	}
 }
 
-// SetupGenesisBlock simulates the creation of the genesis block.
-func (m *CoinDistributionManager) SetupGenesisBlock() error {
-	if m.totalSupply > m.maxSupply {
-		return errors.New("initial supply exceeds maximum supply limit")
+// CreateGenesisBlock creates the genesis block with initial distribution.
+func (is *InitialSetup) CreateGenesisBlock() error {
+	if is.GenesisBlockCreated {
+		return errors.New("genesis block already created")
 	}
-	logger.Printf("Genesis block created with %f Synthron Coins allocated to %s\n", m.genesisBlock.InitialCoins, m.genesisBlock.CreatorsWallet)
+
+	is.InitialGenesisBlockTimestamp = time.Now()
+	is.GenesisBlockCreated = true
+
 	return nil
 }
 
-// CalculateInitialPrice computes the initial market price of Synthron based on various economic factors.
-func (m *CoinDistributionManager) CalculateInitialPrice(costOfProduction, regulatoryCosts, marketAvgPrice, valueMultiplier, tokenomicsFactor, communityInput float64) float64 {
-	initialPrice := (costOfProduction + regulatoryCosts + ((marketAvgPrice * valueMultiplier) / tokenomicsFactor)) * communityInput
-	return initialPrice
-}
-
-func main() {
-	// Initialize logging
-	logger.SetOutput(os.Stdout)
-
-	// Example setup and initial price calculation
-	manager := NewCoinDistributionManager(5000000, "CreatorsWalletAddress", 500000000)
-	if err := manager.SetupGenesisBlock(); err != nil {
-		logger.Printf("Error setting up the genesis block: %v\n", err)
-		return
+// AllocateFunds allocates funds to the respective wallets after genesis block creation.
+func (is *InitialSetup) AllocateFunds() error {
+	if !is.GenesisBlockCreated {
+		return errors.New("genesis block not created")
 	}
 
-	// Hypothetical economic factors for price calculation
-	costOfProduction := 1.0 // Hypothetical cost
-	regulatoryCosts := 0.5  // Hypothetical regulatory costs
-	marketAvgPrice := 2.0   // Average market price of comparable coins
-	valueMultiplier := 1.2  // Value based on technology and usability
-	tokenomicsFactor := 1.1 // Token supply/demand adjustment factor
-	communityInput := 1.05  // Community and ecosystem feedback factor
+	is.Distribution.InternalDevelopmentWallet.Balance = is.TotalSupply * 0.1
+	is.Distribution.ExternalCharitableWallet.Balance = is.TotalSupply * 0.05
+	is.Distribution.InternalCharitableWallet.Balance = is.TotalSupply * 0.05
+	is.Distribution.LoanPoolWallet.Balance = is.TotalSupply * 0.1
+	is.Distribution.PassiveIncomeWallet.Balance = is.TotalSupply * 0.1
+	is.Distribution.NodeHostDistributionWallet.Balance = is.TotalSupply * 0.1
+	is.Distribution.CreatorWallet.Balance = is.TotalSupply * 0.1
 
-	initialPrice := manager.CalculateInitialPrice(costOfProduction, regulatoryCosts, marketAvgPrice, valueMultiplier, tokenomicsFactor, communityInput)
-	logger.Printf("Calculated Initial Price of Synthron Coin: $%.2f\n", initialPrice)
+	return nil
+}
+
+// CheckBalances checks the balances of all wallets.
+func (is *InitialSetup) CheckBalances() map[string]float64 {
+	balances := make(map[string]float64)
+	balances["Genesis Wallet"] = is.Distribution.GenesisWallet.Balance
+	balances["Internal Development Wallet"] = is.Distribution.InternalDevelopmentWallet.Balance
+	balances["External Charitable Wallet"] = is.Distribution.ExternalCharitableWallet.Balance
+	balances["Internal Charitable Wallet"] = is.Distribution.InternalCharitableWallet.Balance
+	balances["Loan Pool Wallet"] = is.Distribution.LoanPoolWallet.Balance
+	balances["Passive Income Wallet"] = is.Distribution.PassiveIncomeWallet.Balance
+	balances["Node Host Distribution Wallet"] = is.Distribution.NodeHostDistributionWallet.Balance
+	balances["Creator Wallet"] = is.Distribution.CreatorWallet.Balance
+
+	return balances
+}
+
+// TransferFunds transfers funds from one wallet to another
+func (is *InitialSetup) TransferFunds(fromWallet, toWallet *Wallet, amount float64) error {
+	if fromWallet.Balance < amount {
+		return errors.New("insufficient funds")
+	}
+
+	fromWallet.Balance -= amount
+	toWallet.Balance += amount
+	return nil
 }

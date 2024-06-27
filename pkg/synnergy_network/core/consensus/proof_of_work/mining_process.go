@@ -1,176 +1,233 @@
-package proof_of_work
+package consensus
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"math/big"
-	"sync"
-	"time"
+    "crypto/ecdsa"
+    "crypto/rand"
+    "crypto/sha256"
+    "encoding/hex"
+    "errors"
+    "fmt"
+    "math/big"
+    "strings"
+    "sync"
+    "time"
 
-	"golang.org/x/crypto/argon2"
+    "golang.org/x/crypto/argon2"
+    "golang.org/x/crypto/scrypt"
 )
 
-// Enhanced types to support richer features and better security
-type Block struct {
-	PreviousHash string
-	Timestamp    time.Time
-	Data         string
-	Nonce        uint64
-	Hash         string
-	Transactions []Transaction
+type MiningProcess struct {
+    Blockchain        []*Block
+    TransactionPool   []Transaction
+    BlockReward       float64
+    Difficulty        int
+    NetworkHashrate   float64
+    MiningTarget      string
+    HalvingInterval   int
+    BlockInterval     time.Duration
+    MinerConfig       *MinerConfig
+    lock              sync.Mutex
 }
 
-type Blockchain struct {
-	Chain               []Block
-	Difficulty          uint32
-	DifficultyAdjustmentInterval int
+type MinerConfig struct {
+    Memory      uint32
+    Iterations  uint32
+    Parallelism uint8
+    SaltLength  uint32
+    KeyLength   uint32
+    Algorithm   string // Indicates current hashing algorithm
 }
 
 type Transaction struct {
-	Sender    string
-	Recipient string
-	Amount    float64
-	Fee       float64
-	Signature string
+    Sender    string
+    Receiver  string
+    Amount    float64
+    Fee       float64
+    Signature string // Assuming ECDSA or similar
 }
 
-type MiningProcess struct {
-	Blockchain        *Blockchain
-	BlockReward       float64
-	RewardHalvingRate int
-	MaxHalvings       int
-	sync.RWMutex
+type Block struct {
+    Timestamp     int64
+    Transactions  []Transaction
+    PrevBlockHash string
+    Nonce         uint64
+    Hash          string
 }
 
-// Initializes with default or provided parameters, ready for flexible configurations
-func NewMiningProcess(blockchain *Blockchain, reward float64, halvingRate, maxHalvings int) *MiningProcess {
-	return &MiningProcess{
-		Blockchain:        blockchain,
-		BlockReward:       reward,
-		RewardHalvingRate: halvingRate,
-		MaxHalvings:       maxHalvings,
-	}
+func NewMiningProcess() *MiningProcess {
+    mc := &MinerConfig{
+        Memory:      64 * 1024,
+        Iterations:  1,
+        Parallelism: 4,
+        SaltLength:  16,
+        KeyLength:   32,
+        Algorithm:   "argon2", // Default to Argon2
+    }
+
+    mp := &MiningProcess{
+        Blockchain:      make([]*Block, 0),
+        TransactionPool: make([]Transaction, 0),
+        BlockReward:     1252,
+        Difficulty:      16,
+        HalvingInterval: 200000,
+        BlockInterval:   10 * time.Minute,
+        MinerConfig:     mc,
+    }
+    mp.calculateMiningTarget()
+    return mp
 }
 
-// Mining and block generation logic enhanced for performance and security
-func (mp *MiningProcess) CreateBlock(previousHash string, transactions []Transaction) Block {
-	mp.Lock()
-	defer mp.Unlock()
-
-	nonce := uint64(0)
-	var block Block
-	for {
-		block = Block{
-			Timestamp:    time.Now(),
-			PreviousHash: previousHash,
-			Nonce:        nonce,
-			Transactions: transactions,
-		}
-		block.Hash = mp.CalculateBlockHash(block)
-		if mp.IsValidHash(block.Hash) {
-			break
-		}
-		nonce++
-	}
-
-	mp.Blockchain.Chain = append(mp.Blockchain.Chain, block)
-	return block
+func (mp *MiningProcess) calculateMiningTarget() {
+    target := big.NewInt(1)
+    target.Lsh(target, uint(256-mp.Difficulty))
+    mp.MiningTarget = target.Text(16)
 }
 
-func (mp *MiningProcess) CalculateBlockHash(block Block) string {
-	data := block.PreviousHash + block.Timestamp.String() + strconv.FormatUint(block.Nonce, 10)
-	for _, tx := range block.Transactions {
-		data += tx.String()
-	}
-	hash := argon2.IDKey([]byte(data), []byte("synthron_salt"), 1, 64*1024, 4, 32)
-	return hex.EncodeToString(hash)
+func (mp *MiningProcess) MineBlock() (*Block, error) {
+    mp.lock.Lock()
+    defer mp.lock.Unlock()
+
+    block := &Block{
+        Timestamp:    time.Now().Unix(),
+        Transactions: mp.TransactionPool,
+        PrevBlockHash: func() string {
+            if len(mp.Blockchain) > 0 {
+                return mp.Blockchain[len(mp.Blockchain)-1].Hash
+            }
+            return ""
+        }(),
+    }
+
+    // Switch hashing algorithm if needed
+    mp.switchHashingAlgorithm()
+
+    for nonce := uint64(0); ; nonce++ {
+        block.Nonce = nonce
+        if hash, err := mp.CalculateBlockHash(block); err == nil && mp.ValidateBlockHash(hash) {
+            block.Hash = hash
+            break
+        }
+    }
+
+    mp.TransactionPool = []Transaction{}
+    mp.Blockchain = append(mp.Blockchain, block)
+
+    mp.adjustDifficulty()
+    mp.adjustBlockReward()
+
+    return block, nil
 }
 
-func (mp *MiningProcess) IsValidHash(hash string) bool {
-	target := mp.GetDifficultyTarget()
-	return strings.HasPrefix(hash, target)
+func (mp *MiningProcess) CalculateBlockHash(block *Block) (string, error) {
+    data := fmt.Sprintf("%d:%s:%d", block.Timestamp, block.PrevBlockHash, block.Nonce)
+    salt, err := rand.Prime(rand.Reader, 128) // Generate a random prime as salt
+    if err != nil {
+        return "", err
+    }
+
+    var hash []byte
+    switch mp.MinerConfig.Algorithm {
+    case "argon2":
+        hash = argon2.IDKey([]byte(data), salt.Bytes(), mp.MinerConfig.Iterations, mp.MinerConfig.Memory, mp.MinerConfig.Parallelism, mp.MinerConfig.KeyLength)
+    case "scrypt":
+        hash, err = scrypt.Key([]byte(data), salt.Bytes(), int(mp.MinerConfig.Iterations), int(mp.MinerConfig.Memory), int(mp.MinerConfig.Parallelism), int(mp.MinerConfig.KeyLength))
+        if err != nil {
+            return "", err
+        }
+    case "sha256":
+        hasher := sha256.New()
+        hasher.Write([]byte(data))
+        hash = hasher.Sum(nil)
+    default:
+        return "", errors.New("unsupported hashing algorithm")
+    }
+
+    return hex.EncodeToString(hash), nil
 }
 
-func (mp *MiningProcess) GetDifficultyTarget() string {
-	difficultyBits := int(mp.Blockchain.Difficulty)
-	return strings.Repeat("0", difficultyBits) + strings.Repeat("f", 64-difficultyBits)
+func (mp *MiningProcess) ValidateBlockHash(hash string) bool {
+    targetHash, _ := new(big.Int).SetString(mp.MiningTarget, 16)
+    blockHash, _ := new(big.Int).SetString(hash, 16)
+    return blockHash.Cmp(targetHash) == -1
 }
 
-// Reward and difficulty adjustment mechanics optimized for economic sustainability
-func (mp *MiningProcess) CalculateMiningReward(height int) float64 {
-	halvings := height / mp.RewardHalvingRate
-	if halvings > mp.MaxHalvings {
-		return 0
-	}
-	return mp.BlockReward / float64(1<<uint(halvings))
+func (mp *MiningProcess) adjustDifficulty() {
+    if len(mp.Blockchain)%2016 == 0 && len(mp.Blockchain) > 0 {
+        expectedTime := int64(mp.BlockInterval.Seconds() * 2016)
+        actualTime := mp.Blockchain[len(mp.Blockchain)-1].Timestamp - mp.Blockchain[len(mp.Blockchain)-2016].Timestamp
+        if actualTime < expectedTime {
+            mp.Difficulty++
+        } else if actualTime > expectedTime {
+            mp.Difficulty--
+        }
+        mp.calculateMiningTarget()
+    }
 }
 
-func (mp *MiningProcess) AdjustDifficulty(actualTime, expectedTime time.Duration) {
-	mp.Lock()
-	defer mp.Unlock()
-
-	ratio := float64(actualTime) / float64(expectedTime)
-	if ratio < 0.9 {
-		mp.Blockchain.Difficulty++
-	} else if ratio > 1.1 && mp.Blockchain.Difficulty > 1 {
-		mp.Blockchain.Difficulty--
-	}
+func (mp *MiningProcess) adjustBlockReward() {
+    if len(mp.Blockchain)%mp.HalvingInterval == 0 && len(mp.Blockchain) > 0 {
+        mp.BlockReward /= 2
+    }
 }
 
-// MonitorMiningEfficiency should be run in a separate goroutine to continuously monitor the mining process.
-func (mp *MiningProcess) MonitorMiningEfficiency() {
-	expectedBlockTime := time.Minute * 10 // Expected time to mine one block
-	ticker := time.NewTicker(time.Minute * 5) // Check every 5 minutes
+func (mp *MiningProcess) switchHashingAlgorithm() {
+    const performanceThreshold = 1000000 // Example threshold for hashrate in H/s
 
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if len(mp.Blockchain.Chain) < 2 {
-				continue
-			}
-
-			lastBlock := mp.Blockchain.Chain[len(mp.Blockchain.Chain)-1]
-			secondLastBlock := mp.Blockchain.Chain[len(mp.Blockchain.Chain)-2]
-
-			actualTime := lastBlock.Timestamp.Sub(secondLastBlock.Timestamp)
-			mp.AdjustDifficulty(actualTime, expectedBlockTime)
-
-			log.Printf("Adjusted difficulty to %d due to mining time variation", mp.Blockchain.Difficulty)
-		}
-	}
+    // Check the current network hashrate and switch algorithms accordingly
+    if mp.NetworkHashrate < performanceThreshold {
+        mp.MinerConfig.Algorithm = "scrypt" // Use Scrypt for lower energy and compute requirements
+        fmt.Println("Switched to Scrypt due to low network hashrate.")
+    } else {
+        mp.MinerConfig.Algorithm = "argon2" // Default to Argon2 for enhanced security
+        fmt.Println("Using Argon2 for optimal security.")
+    }
 }
 
-func main() {
-	// Initialize blockchain with genesis block
-	genesisBlock := Block{
-		PreviousHash: "0",
-		Timestamp:    time.Now(),
-		Data:         "Genesis Block",
-		Nonce:        0,
-	}
-	genesisBlock.Hash = hex.EncodeToString(argon2.IDKey([]byte(genesisBlock.Data), []byte("genesis_salt"), 1, 64*1024, 4, 32))
+func (mp *MiningProcess) AddTransaction(tx Transaction) error {
+    mp.lock.Lock()
+    defer mp.lock.Unlock()
 
-	blockchain := &Blockchain{
-		Chain:               []Block{genesisBlock},
-		Difficulty:          20, // Starting difficulty, relatively low for demonstration
-		DifficultyAdjustmentInterval: 2016,
-	}
+    // Check for double spending by ensuring no other pending transaction from the same sender has the same amount and receiver
+    for _, transaction := range mp.TransactionPool {
+        if transaction.Sender == tx.Sender && transaction.Amount == tx.Amount && transaction.Receiver == tx.Receiver {
+            return errors.New("double spending attempt detected")
+        }
+    }
 
-	// Set up the mining process
-	miner := NewMiningProcess(blockchain, 1252, 200000, 64)
-	go miner.MonitorMiningEfficiency() // Start monitoring in a separate goroutine
+    // Validate the transaction signature
+    if !validateSignature(tx) {
+        return errors.New("invalid transaction signature")
+    }
 
-	// Example of mining blocks
-	for i := 0; i < 10; i++ {
-		lastBlock := blockchain.Chain[len(blockchain.Chain)-1]
-		newBlock, err := miner.MineBlock()
-		if err != nil {
-			log.Fatalf("Mining failed: %s", err)
-		}
-		log.Printf("New block mined with hash: %s at height: %d", newBlock.Hash, len(blockchain.Chain))
-	}
+    // Add the transaction to the pool if all checks pass
+    mp.TransactionPool = append(mp.TransactionPool, tx)
+    fmt.Println("Transaction added successfully")
+    return nil
+}
 
-	// The mining will run indefinitely unless there is a break condition or stop signal handled elsewhere.
+func validateSignature(tx Transaction) bool {
+    // Simulate getting the public key (this should actually be fetched based on sender's address)
+    publicKey := getPublicKey(tx.Sender) // Assume this function retrieves the ECDSA public key for the sender
+
+    // Decode the hex signature
+    sigR, sigS := new(big.Int), new(big.Int)
+    sigLen := len(tx.Signature)
+    rHex, sHex := tx.Signature[:sigLen/2], tx.Signature[sigLen/2:]
+    sigR.SetString(rHex, 16)
+    sigS.SetString(sHex, 16)
+
+    // Create the hash of the transaction details
+    hasher := sha256.New()
+    hasher.Write([]byte(fmt.Sprintf("%s:%s:%f:%f", tx.Sender, tx.Receiver, tx.Amount, tx.Fee)))
+    hash := hasher.Sum(nil)
+
+    // Verify the signature
+    ecdsaPublicKey := publicKey.(*ecdsa.PublicKey)
+    return ecdsa.Verify(ecdsaPublicKey, hash, sigR, sigS)
+}
+
+// This function is a placeholder and needs proper implementation based on your system
+func getPublicKey(sender string) interface{} {
+    // This should return the actual public key object associated with a sender's address
+    return &ecdsa.PublicKey{} // Placeholder return
 }

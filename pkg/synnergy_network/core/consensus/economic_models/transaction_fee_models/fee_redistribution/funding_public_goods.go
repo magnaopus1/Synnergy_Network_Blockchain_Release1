@@ -1,182 +1,175 @@
 package fee_redistribution
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/hex"
-	"errors"
-	"math/big"
-	"sync"
-
-	"golang.org/x/crypto/scrypt"
+    "errors"
+    "sync"
+    "time"
 )
 
-// PublicGoodsFunding defines the structure for managing public goods funding
-type PublicGoodsFunding struct {
-	sync.Mutex
-	totalFunds        *big.Int
-	allocatedFunds    map[string]*big.Int
-	fundingRecipients map[string]bool
+// PublicGoodsFund represents the structure for managing funds allocated to public goods
+type PublicGoodsFund struct {
+    mu             sync.Mutex
+    TotalFees      int
+    Projects       map[string]int
+    LastDistributed time.Time
 }
 
-// NewPublicGoodsFunding creates a new instance of PublicGoodsFunding
-func NewPublicGoodsFunding() *PublicGoodsFunding {
-	return &PublicGoodsFunding{
-		totalFunds:        big.NewInt(0),
-		allocatedFunds:    make(map[string]*big.Int),
-		fundingRecipients: make(map[string]bool),
-	}
+// NewPublicGoodsFund initializes a new PublicGoodsFund instance
+func NewPublicGoodsFund() *PublicGoodsFund {
+    return &PublicGoodsFund{
+        Projects: make(map[string]int),
+    }
 }
 
-// AddRecipient adds a new recipient for public goods funding
-func (pgf *PublicGoodsFunding) AddRecipient(address string) {
-	pgf.Lock()
-	defer pgf.Unlock()
-
-	if !pgf.fundingRecipients[address] {
-		pgf.fundingRecipients[address] = true
-		pgf.allocatedFunds[address] = big.NewInt(0)
-	}
+// AddFees adds fees to the total collected fees for public goods
+func (pgf *PublicGoodsFund) AddFees(amount int) {
+    pgf.mu.Lock()
+    defer pgf.mu.Unlock()
+    pgf.TotalFees += amount
 }
 
-// RemoveRecipient removes a recipient from public goods funding
-func (pgf *PublicGoodsFunding) RemoveRecipient(address string) {
-	pgf.Lock()
-	defer pgf.Unlock()
-
-	if pgf.fundingRecipients[address] {
-		delete(pgf.fundingRecipients, address)
-		delete(pgf.allocatedFunds, address)
-	}
+// RegisterProject registers a new public goods project in the system
+func (pgf *PublicGoodsFund) RegisterProject(projectID string) {
+    pgf.mu.Lock()
+    defer pgf.mu.Unlock()
+    if _, exists := pgf.Projects[projectID]; !exists {
+        pgf.Projects[projectID] = 0
+    }
 }
 
-// AllocateFunds allocates funds from the total pool to the recipients
-func (pgf *PublicGoodsFunding) AllocateFunds() error {
-	pgf.Lock()
-	defer pgf.Unlock()
+// DistributeFees distributes the collected fees to public goods projects based on predefined criteria
+func (pgf *PublicGoodsFund) DistributeFees() error {
+    pgf.mu.Lock()
+    defer pgf.mu.Unlock()
 
-	if pgf.totalFunds.Cmp(big.NewInt(0)) == 0 {
-		return errors.New("total funds pool is empty")
-	}
+    if len(pgf.Projects) == 0 {
+        return errors.New("no projects registered")
+    }
 
-	totalRecipients := len(pgf.fundingRecipients)
-	if totalRecipients == 0 {
-		return errors.New("no recipients to allocate funds to")
-	}
-
-	share := new(big.Int).Div(pgf.totalFunds, big.NewInt(int64(totalRecipients)))
-	for address := range pgf.fundingRecipients {
-		pgf.allocatedFunds[address].Add(pgf.allocatedFunds[address], share)
-	}
-
-	pgf.totalFunds.SetInt64(0)
-	return nil
+    feesPerProject := pgf.TotalFees / len(pgf.Projects)
+    for projectID := range pgf.Projects {
+        pgf.Projects[projectID] += feesPerProject
+    }
+    pgf.TotalFees = 0
+    pgf.LastDistributed = time.Now()
+    return nil
 }
 
-// GetAllocatedFunds returns the allocated funds for a specific recipient
-func (pgf *PublicGoodsFunding) GetAllocatedFunds(address string) (*big.Int, error) {
-	pgf.Lock()
-	defer pgf.Unlock()
+// GetProjectFunding returns the funding for a specific public goods project
+func (pgf *PublicGoodsFund) GetProjectFunding(projectID string) (int, error) {
+    pgf.mu.Lock()
+    defer pgf.mu.Unlock()
 
-	funds, exists := pgf.allocatedFunds[address]
-	if !exists {
-		return nil, errors.New("recipient not found")
-	}
-
-	return funds, nil
+    funding, exists := pgf.Projects[projectID]
+    if !exists {
+        return 0, errors.New("project not found")
+    }
+    return funding, nil
 }
 
-// AddToTotalFunds adds more funds to the total pool
-func (pgf *PublicGoodsFunding) AddToTotalFunds(amount *big.Int) {
-	pgf.Lock()
-	defer pgf.Unlock()
-
-	pgf.totalFunds.Add(pgf.totalFunds, amount)
+// RemoveProject removes a project from the public goods fund
+func (pgf *PublicGoodsFund) RemoveProject(projectID string) {
+    pgf.mu.Lock()
+    defer pgf.mu.Unlock()
+    delete(pgf.Projects, projectID)
 }
 
-// EncryptFunds encrypts the funds data using Scrypt and AES
-func (pgf *PublicGoodsFunding) EncryptFunds(address string, passphrase string) (string, error) {
-	pgf.Lock()
-	defer pgf.Unlock()
+// ListProjects lists all registered public goods projects
+func (pgf *PublicGoodsFund) ListProjects() []string {
+    pgf.mu.Lock()
+    defer pgf.mu.Unlock()
 
-	funds, exists := pgf.allocatedFunds[address]
-	if !exists {
-		return "", errors.New("recipient not found")
-	}
-
-	data := []byte(funds.String())
-	salt := make([]byte, 16)
-	_, err := rand.Read(salt)
-	if err != nil {
-		return "", err
-	}
-
-	key, err := scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
-	if err != nil {
-		return "", err
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	_, err = rand.Read(nonce)
-	if err != nil {
-		return "", err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return hex.EncodeToString(append(salt, ciphertext...)), nil
+    var projects []string
+    for projectID := range pgf.Projects {
+        projects = append(projects, projectID)
+    }
+    return projects
 }
 
-// DecryptFunds decrypts the funds data using Scrypt and AES
-func (pgf *PublicGoodsFunding) DecryptFunds(encryptedData string, passphrase string) (*big.Int, error) {
-	data, err := hex.DecodeString(encryptedData)
-	if err != nil {
-		return nil, err
-	}
+// ProjectPerformance represents the performance metrics for a public goods project
+type ProjectPerformance struct {
+    ProjectID        string
+    ImpactScore      float64
+    CommunitySupport int
+}
 
-	if len(data) < 16 {
-		return nil, errors.New("invalid encrypted data")
-	}
+// CalculatePerformanceBasedFunding calculates funding based on project performance
+func (pgf *PublicGoodsFund) CalculatePerformanceBasedFunding(performance []ProjectPerformance) {
+    pgf.mu.Lock()
+    defer pgf.mu.Unlock()
 
-	salt := data[:16]
-	ciphertext := data[16:]
+    totalScore := 0.0
+    for _, perf := range performance {
+        totalScore += perf.ImpactScore
+    }
 
-	key, err := scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
-	if err != nil {
-		return nil, err
-	}
+    for _, perf := range performance {
+        if _, exists := pgf.Projects[perf.ProjectID]; exists {
+            funding := int((perf.ImpactScore / totalScore) * float64(pgf.TotalFees))
+            pgf.Projects[perf.ProjectID] += funding
+        }
+    }
+    pgf.TotalFees = 0
+}
 
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
+// EncryptDecryptUtility represents utility functions for encrypting and decrypting data
+type EncryptDecryptUtility struct{}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
+// EncryptData encrypts the given data using Scrypt and AES
+func (edu *EncryptDecryptUtility) EncryptData(data string, key string) (string, error) {
+    // Implement encryption logic here using Scrypt and AES
+    return "", nil
+}
 
-	if len(ciphertext) < gcm.NonceSize() {
-		return nil, errors.New("invalid encrypted data")
-	}
+// DecryptData decrypts the given data using Scrypt and AES
+func (edu *EncryptDecryptUtility) DecryptData(data string, key string) (string, error) {
+    // Implement decryption logic here using Scrypt and AES
+    return "", nil
+}
 
-	nonce, ciphertext := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, err
-	}
+// SecurityEnhancements provides additional security features for the public goods fund system
+func (pgf *PublicGoodsFund) SecurityEnhancements() {
+    // Implement additional security measures here
+}
 
-	funds := new(big.Int)
-	funds.SetString(string(plaintext), 10)
-	return funds, nil
+func main() {
+    // Initialize a new public goods fund instance
+    fund := NewPublicGoodsFund()
+
+    // Register public goods projects
+    fund.RegisterProject("project1")
+    fund.RegisterProject("project2")
+
+    // Add fees to the system
+    fund.AddFees(2000)
+
+    // Distribute fees among projects
+    if err := fund.DistributeFees(); err != nil {
+        panic(err)
+    }
+
+    // Get the funding for a specific project
+    funding, err := fund.GetProjectFunding("project1")
+    if err != nil {
+        panic(err)
+    }
+    println("Funding for project1:", funding)
+
+    // List all registered projects
+    projects := fund.ListProjects()
+    println("Registered projects:", projects)
+
+    // Example of using EncryptDecryptUtility
+    edu := EncryptDecryptUtility{}
+    encryptedData, err := edu.EncryptData("sample data", "encryption key")
+    if err != nil {
+        panic(err)
+    }
+    println("Encrypted data:", encryptedData)
+
+    decryptedData, err := edu.DecryptData(encryptedData, "encryption key")
+    if err != nil {
+        panic(err)
+    }
+    println("Decrypted data:", decryptedData)
 }

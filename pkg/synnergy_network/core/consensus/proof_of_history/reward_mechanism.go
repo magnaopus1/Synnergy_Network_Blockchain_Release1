@@ -1,105 +1,80 @@
-package proof_of_history
+package consensus
 
 import (
-	"crypto/sha256"
-	"fmt"
-	"math/big"
-	"sync"
-	"time"
+    "math/big"
+    "sync"
+    "synnergy_network/pkg/synnergy_network/core/blockchain"
 )
 
-// Constants for reward calculations.
-const (
-	baseReward     = 10    // Base reward for block validation
-	transactionFee = 0.01  // Fee per transaction included in a block
-)
-
-// Validator represents a node that can validate transactions and create blocks.
-type Validator struct {
-	ID         string  // Unique identifier for the validator
-	Stake      float64 // Amount of coin staked
-	TotalStake float64 // Total staked amount in the network for weight calculation
+// RewardConfig defines the configuration for reward calculations
+type RewardConfig struct {
+    BaseReward    *big.Int
+    TotalStake    *big.Int
+    DynamicFactor float64
 }
 
-// Block represents a blockchain block.
-type Block struct {
-	Transactions []*Transaction
-	Validator    *Validator
-	Timestamp    time.Time
-	Hash         string
-	Reward       float64
+// RewardCalculator handles the computation of rewards for block validation and transaction processing.
+type RewardCalculator struct {
+    config *RewardConfig
 }
 
-// Transaction encapsulates details of a blockchain transaction.
-type Transaction struct {
-	Data      string
-	Timestamp time.Time
+// NewRewardCalculator initializes a new RewardCalculator with provided configurations.
+func NewRewardCalculator(config *RewardConfig) *RewardCalculator {
+    return &RewardCalculator{
+        config: config,
+    }
 }
 
-// GenerateHash computes a SHA-256 hash for block and transaction identifiers.
-func GenerateHash(data string) string {
-	hashBytes := sha256.Sum256([]byte(data))
-	return fmt.Sprintf("%x", hashBytes)
+// CalculateBlockReward computes the reward for a block based on the validator's stake.
+func (rc *RewardCalculator) CalculateBlockReward(validatorStake *big.Int) *big.Int {
+    validatorFactor := new(big.Float).Quo(new(big.Float).SetInt(validatorStake), new(big.Float).SetInt(rc.config.TotalStake))
+    dynamicFactor := big.NewFloat(rc.config.DynamicFactor)
+    reward := new(big.Float).Mul(new(big.Float).SetInt(rc.config.BaseReward), validatorFactor)
+    reward.Mul(reward, dynamicFactor)
+    result := new(big.Int)
+    reward.Int(result)
+    return result
 }
 
-// CalculateReward determines the reward for a validator based on block and transaction metrics.
-func CalculateReward(block *Block) float64 {
-	// Reward based on the number of transactions and the base reward
-	numTransactions := len(block.Transactions)
-	reward := baseReward + (transactionFee * float64(numTransactions))
+// DistributeTransactionFees calculates the transaction fee reward for a block.
+func (rc *RewardCalculator) DistributeTransactionFees(fees []*big.Int, blockReward *big.Int) *big.Int {
+    totalFees := big.NewInt(0)
+    for _, fee := range fees {
+        totalFees.Add(totalFees, fee)
+    }
 
-	// Additional reward based on stake ratio if applicable
-	stakeRatio := block.Validator.Stake / block.Validator.TotalStake
-	reward += reward * stakeRatio
-
-	return reward
+    totalReward := big.NewInt(0)
+    for _, fee := range fees {
+        share := new(big.Float).Quo(new(big.Float).SetInt(fee), new(big.Float).SetInt(totalFees))
+        reward := new(big.Float).Mul(share, new(big.Float).SetInt(blockReward))
+        partialReward := new(big.Int)
+        reward.Int(partialReward)
+        totalReward.Add(totalReward, partialReward)
+    }
+    return totalReward
 }
 
-// CreateBlock simulates block creation by a validator.
-func (v *Validator) CreateBlock(transactions []*Transaction) *Block {
-	block := &Block{
-		Transactions: transactions,
-		Validator:    v,
-		Timestamp:    time.Now(),
-	}
-
-	// Generate a unique hash for the block
-	blockData := fmt.Sprintf("%v-%v", v.ID, block.Timestamp)
-	block.Hash = GenerateHash(blockData)
-
-	// Calculate the reward for the block
-	block.Reward = CalculateReward(block)
-
-	return block
+// ValidatorRewards manages the distribution of rewards to validators.
+type ValidatorRewards struct {
+    calculator *RewardCalculator
+    mutex      sync.Mutex
 }
 
-// Blockchain represents the entire chain of blocks validated by different validators.
-type Blockchain struct {
-	Blocks []*Block
-	mu     sync.Mutex
+// NewValidatorRewards creates an instance of ValidatorRewards.
+func NewValidatorRewards(calculator *RewardCalculator) *ValidatorRewards {
+    return &ValidatorRewards{
+        calculator: calculator,
+    }
 }
 
-// AddBlock adds a new block to the blockchain.
-func (bc *Blockchain) AddBlock(block *Block) {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
+// RewardValidator calculates and distributes the rewards for a block's validator.
+func (vr *ValidatorRewards) RewardValidator(validatorStake *big.Int, fees []*big.Int) *big.Int {
+    vr.mutex.Lock()
+    defer vr.mutex.Unlock()
 
-	bc.Blocks = append(bc.Blocks, block)
-	fmt.Printf("Block added by Validator %s: Reward %.2f\n", block.Validator.ID, block.Reward)
+    blockReward := vr.calculator.CalculateBlockReward(validatorStake)
+    transactionRewards := vr.calculator.DistributeTransactionFees(fees, blockReward)
+    totalReward := new(big.Int).Add(blockReward, transactionRewards)
+    return totalReward
 }
 
-func main() {
-	// Example initialization and operation
-	blockchain := &Blockchain{}
-	validator := &Validator{ID: "Validator1", Stake: 1500, TotalStake: 10000}
-
-	// Simulate transaction processing
-	transactions := []*Transaction{
-		{Data: "Alice pays Bob 5 coins", Timestamp: time.Now()},
-		{Data: "Charlie pays Dana 3 coins", Timestamp: time.Now()},
-	}
-	block := validator.CreateBlock(transactions)
-
-	// Add block to blockchain
-	blockchain.AddBlock(block)
-}

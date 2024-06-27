@@ -1,99 +1,123 @@
-package proof_of_stake
+package consensus
 
 import (
-    "math/big"
-    "time"
+	"errors"
+	"math/big"
+	"sync"
+	"time"
 )
 
+// Validator encapsulates the stake and penalty details for a single validator.
 type Validator struct {
-    Address        string
-    Stake          *big.Int
-    StartDate      time.Time
-    IsSlashed      bool
-    SlashedAmount  *big.Int
-    LockupPeriod   time.Duration
+	ID              string
+	StakeAmount     *big.Int
+	StakeStartTime  time.Time
+	IsActive        bool
+	TotalPenalties  *big.Int
+	LockUpPeriod    time.Duration
 }
 
-type Blockchain struct {
-    Validators []*Validator
-    TotalStaked *big.Int
+// SlashingRule defines the criteria and consequences of a slashing condition.
+type SlashingRule struct {
+	Condition func(*Validator) bool
+	Penalty   *big.Int
 }
 
-// NewValidator initializes a new validator struct
-func NewValidator(address string, stakeAmount *big.Int, lockupPeriod time.Duration) *Validator {
-    return &Validator{
-        Address:      address,
-        Stake:        stakeAmount,
-        StartDate:    time.Now(),
-        LockupPeriod: lockupPeriod,
-    }
+// StakingAndSlashing manages all staking and slashing operations.
+type StakingAndSlashing struct {
+	validators map[string]*Validator
+	rules      []SlashingRule
+	lock       sync.RWMutex
 }
 
-// AddValidator adds a new validator to the blockchain
-func (bc *Blockchain) AddValidator(validator *Validator) {
-    bc.Validators = append(bc.Validators, validator)
-    bc.TotalStaked.Add(bc.TotalStaked, validator.Stake)
+// NewStakingAndSlashing initializes the StakingAndSlashing system with default settings.
+func NewStakingAndSlashing() *StakingAndSlashing {
+	return &StakingAndSlashing{
+		validators: make(map[string]*Validator),
+		rules:      initializeSlashingRules(),
+	}
 }
 
-// CalculateSlashingAmount calculates the amount to be slashed based on severity
-func (v *Validator) CalculateSlashingAmount(severity int) *big.Int {
-    penaltyPercentage := big.NewInt(int64(severity * 10)) // 10% per severity level
-    slashAmount := new(big.Int).Mul(v.Stake, penaltyPercentage)
-    slashAmount.Div(slashAmount, big.NewInt(100))
-    return slashAmount
+// initializeSlashingRules defines default slashing conditions.
+func initializeSlashingRules() []SlashingRule {
+	return []SlashingRule{
+		{
+			Condition: func(v *Validator) bool {
+				return time.Since(v.StakeStartTime) < v.LockUpPeriod && !v.IsActive
+			},
+			Penalty: big.NewInt(100), // example penalty for early unstaking or inactivity
+		},
+		// Additional slashing conditions can be implemented here.
+	}
 }
 
-// SlashValidator applies the slashing penalty to the validator
-func (v *Validator) SlashValidator(severity int) {
-    if v.IsSlashed {
-        return
-    }
-    slashAmount := v.CalculateSlashingAmount(severity)
-    v.Stake.Sub(v.Stake, slashAmount)
-    v.SlashedAmount = slashAmount
-    v.IsSlashed = true
+// Stake registers or increases a stake for a validator.
+func (s *StakingAndSlashing) Stake(validatorID string, amount *big.Int, lockUpPeriod time.Duration) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if amount.Sign() <= 0 {
+		return errors.New("stake amount must be positive")
+	}
+
+	validator, exists := s.validators[validatorID]
+	if !exists {
+		validator = &Validator{
+			ID:             validatorID,
+			StakeAmount:    big.NewInt(0),
+			StakeStartTime: time.Now(),
+			IsActive:       true,
+			TotalPenalties: big.NewInt(0),
+			LockUpPeriod:   lockUpPeriod,
+		}
+		s.validators[validatorID] = validator
+	}
+
+	validator.StakeAmount.Add(validator.StakeAmount, amount)
+	return nil
 }
 
-// CheckLockupPeriod checks if the lockup period has passed for unstaking
-func (v *Validator) CheckLockupPeriod() bool {
-    return time.Since(v.StartDate) >= v.LockupPeriod
+// Slash evaluates all validators against the defined slashing conditions.
+func (s *StakingAndSlashing) Slash() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	for _, validator := range s.validators {
+		for _, rule := range s.rules {
+			if rule.Condition(validator) {
+				validator.StakeAmount.Sub(validator.StakeAmount, rule.Penalty)
+				validator.TotalPenalties.Add(validator.TotalPenalties, rule.Penalty)
+			}
+		}
+	}
 }
 
-// RewardValidators distributes rewards to all active validators proportionally to their stakes
-func (bc *Blockchain) RewardValidators(transactionVolume *big.Int) {
-    totalTransactions := big.NewInt(1) // Placeholder for the total number of transactions
-    for _, v := range bc.Validators {
-        if !v.IsSlashed {
-            reward := new(big.Int).Mul(v.Stake, transactionVolume)
-            reward.Div(reward, totalTransactions)
-            reward.Div(reward, bc.TotalStaked)
-            // Assuming a reward pool (additional mechanism to be defined for actual pool management)
-            v.Stake.Add(v.Stake, reward)
-        }
-    }
+// Unstake handles the removal of stake considering the lock-up period.
+func (s *StakingAndSlashing) Unstake(validatorID string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	validator, exists := s.validators[validatorID]
+	if !exists {
+		return errors.New("validator not found")
+	}
+
+	if time.Since(validator.StakeStartTime) < validator.LockUpPeriod {
+		return errors.New("cannot unstake during lock-up period")
+	}
+
+	delete(s.validators, validatorID)
+	return nil
 }
 
-// InitializeBlockchain initializes a new instance of a blockchain
-func InitializeBlockchain() *Blockchain {
-    return &Blockchain{
-        Validators: []*Validator{},
-        TotalStaked: big.NewInt(0),
-    }
-}
+// GetValidator returns the detailed information of a validator.
+func (s *StakingAndSlashing) GetValidator(validatorID string) (*Validator, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
-func main() {
-    blockchain := InitializeBlockchain()
-
-    // Example usage
-    validator := NewValidator("0x123", big.NewInt(1000), 180*24*time.Hour)
-    blockchain.AddValidator(validator)
-    validator.SlashValidator(1) // Low severity slashing
-
-    if validator.CheckLockupPeriod() {
-        println("Lockup period is over, the validator can unstake or withdraw.")
-    }
-
-    // Simulate reward distribution based on transaction volume
-    transactionVolume := big.NewInt(10000) // Example transaction volume
-    blockchain.RewardValidators(transactionVolume)
+	validator, exists := s.validators[validatorID]
+	if !exists {
+		return nil, errors.New("validator not found")
+	}
+	return validator, nil
 }

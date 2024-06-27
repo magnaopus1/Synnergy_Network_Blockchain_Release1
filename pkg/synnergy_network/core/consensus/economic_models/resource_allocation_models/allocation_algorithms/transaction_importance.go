@@ -2,166 +2,183 @@ package allocation_algorithms
 
 import (
 	"errors"
-	"math/big"
 	"sync"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/transaction"
 )
 
-// TransactionImportanceManager manages resource allocation based on transaction importance
-type TransactionImportanceManager struct {
-	mu            sync.Mutex
-	transactions  map[string]*TransactionDetail
-	participants  map[string]*ParticipantDetail
-}
-
-// TransactionDetail represents the details of a transaction
-type TransactionDetail struct {
+// Transaction represents a blockchain transaction
+type Transaction struct {
 	ID       string
-	Value    *big.Int
-	Sender   string
-	Urgency  int
-	Reputation int
+	Value    float64
+	Priority int
+	Size     int
 }
 
-// ParticipantDetail represents a participant in the network
-type ParticipantDetail struct {
-	ID       string
-	Reputation int
+// Network represents the entire network state
+type Network struct {
+	mu           sync.Mutex
+	Transactions map[string]*Transaction
+	Nodes        map[string]*Node
 }
 
-// NewTransactionImportanceManager initializes a new instance of TransactionImportanceManager
-func NewTransactionImportanceManager() *TransactionImportanceManager {
-	return &TransactionImportanceManager{
-		transactions: make(map[string]*TransactionDetail),
-		participants: make(map[string]*ParticipantDetail),
+// Node represents a network participant
+type Node struct {
+	ID    string
+	Stake int
+}
+
+// NewNetwork initializes a new Network
+func NewNetwork() *Network {
+	return &Network{
+		Transactions: make(map[string]*Transaction),
+		Nodes:        make(map[string]*Node),
 	}
 }
 
-// AddTransaction adds a new transaction to be considered for resource allocation
-func (tim *TransactionImportanceManager) AddTransaction(tx *transaction.Transaction, urgency int, reputation int) {
-	tim.mu.Lock()
-	defer tim.mu.Unlock()
-	tim.transactions[tx.ID] = &TransactionDetail{
-		ID:       tx.ID,
-		Value:    tx.Value,
-		Sender:   tx.Sender,
-		Urgency:  urgency,
-		Reputation: reputation,
-	}
-}
-
-// AddParticipant adds a new participant to the network
-func (tim *TransactionImportanceManager) AddParticipant(id string, reputation int) {
-	tim.mu.Lock()
-	defer tim.mu.Unlock()
-	tim.participants[id] = &ParticipantDetail{
+// AddTransaction adds a transaction to the network
+func (n *Network) AddTransaction(id string, value float64, priority int, size int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.Transactions[id] = &Transaction{
 		ID:       id,
-		Reputation: reputation,
+		Value:    value,
+		Priority: priority,
+		Size:     size,
 	}
 }
 
-// UpdateTransaction updates the details of an existing transaction
-func (tim *TransactionImportanceManager) UpdateTransaction(id string, urgency int, reputation int) error {
-	tim.mu.Lock()
-	defer tim.mu.Unlock()
-	tx, exists := tim.transactions[id]
+// RemoveTransaction removes a transaction from the network
+func (n *Network) RemoveTransaction(id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	_, exists := n.Transactions[id]
 	if !exists {
 		return errors.New("transaction not found")
 	}
-	tx.Urgency = urgency
-	tx.Reputation = reputation
+	delete(n.Transactions, id)
 	return nil
 }
 
-// UpdateParticipant updates the details of an existing participant
-func (tim *TransactionImportanceManager) UpdateParticipant(id string, reputation int) error {
-	tim.mu.Lock()
-	defer tim.mu.Unlock()
-	participant, exists := tim.participants[id]
+// CalculateTransactionImportance calculates the importance of a transaction
+func (n *Network) CalculateTransactionImportance(id string) (float64, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	tx, exists := n.Transactions[id]
 	if !exists {
-		return errors.New("participant not found")
+		return 0, errors.New("transaction not found")
 	}
-	participant.Reputation = reputation
-	return nil
+	importance := (tx.Value + float64(tx.Priority)) / float64(tx.Size)
+	return importance, nil
 }
 
-// AllocateResources allocates resources to transactions based on their importance
-func (tim *TransactionImportanceManager) AllocateResources() ([]*transaction.Transaction, error) {
-	if len(tim.transactions) == 0 {
-		return nil, errors.New("no transactions to allocate resources for")
+// PrioritizeTransactions sorts transactions based on their importance
+func (n *Network) PrioritizeTransactions() []*Transaction {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var txs []*Transaction
+	for _, tx := range n.Transactions {
+		txs = append(txs, tx)
 	}
 
-	tim.mu.Lock()
-	defer tim.mu.Unlock()
-
-	// Sort transactions based on their importance
-	sortedTransactions := tim.sortTransactionsByImportance()
-
-	return sortedTransactions, nil
-}
-
-func (tim *TransactionImportanceManager) sortTransactionsByImportance() []*transaction.Transaction {
-	// Placeholder: sort transactions by importance (value, urgency, sender reputation, transaction reputation)
-	// Real-world scenarios would require more sophisticated sorting mechanisms
-	transactionList := make([]*transaction.Transaction, 0, len(tim.transactions))
-	for _, txDetail := range tim.transactions {
-		transactionList = append(transactionList, &transaction.Transaction{
-			ID:     txDetail.ID,
-			Value:  txDetail.Value,
-			Sender: txDetail.Sender,
-			Fee:    big.NewInt(0), // Placeholder, actual fee calculation would be more complex
-		})
-	}
-
-	// Sort transactions by importance (value, urgency, sender reputation, transaction reputation)
-	for i := 0; i < len(transactionList); i++ {
-		for j := i + 1; j < len(transactionList); j++ {
-			if tim.compareImportance(transactionList[i], transactionList[j]) < 0 {
-				transactionList[i], transactionList[j] = transactionList[j], transactionList[i]
+	// Sort transactions by importance
+	for i := range txs {
+		for j := i + 1; j < len(txs); j++ {
+			impI := (txs[i].Value + float64(txs[i].Priority)) / float64(txs[i].Size)
+			impJ := (txs[j].Value + float64(txs[j].Priority)) / float64(txs[j].Size)
+			if impI < impJ {
+				txs[i], txs[j] = txs[j], txs[i]
 			}
 		}
 	}
-	return transactionList
+
+	return txs
 }
 
-func (tim *TransactionImportanceManager) compareImportance(tx1, tx2 *transaction.Transaction) int {
-	detail1 := tim.transactions[tx1.ID]
-	detail2 := tim.transactions[tx2.ID]
+// AllocateResourcesBasedOnImportance allocates resources to nodes based on transaction importance
+func (n *Network) AllocateResourcesBasedOnImportance(totalResources int) map[string]int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 
-	importance1 := new(big.Int).Add(detail1.Value, big.NewInt(int64(detail1.Urgency+detail1.Reputation)))
-	importance2 := new(big.Int).Add(detail2.Value, big.NewInt(int64(detail2.Urgency+detail2.Reputation)))
+	allocation := make(map[string]int)
+	transactions := n.PrioritizeTransactions()
+	if len(transactions) == 0 {
+		return allocation
+	}
 
-	return importance1.Cmp(importance2)
+	totalImportance := 0.0
+	importanceMap := make(map[string]float64)
+
+	for _, tx := range transactions {
+		importance, _ := n.CalculateTransactionImportance(tx.ID)
+		importanceMap[tx.ID] = importance
+		totalImportance += importance
+	}
+
+	for _, tx := range transactions {
+		importance := importanceMap[tx.ID]
+		allocation[tx.ID] = int((importance / totalImportance) * float64(totalResources))
+	}
+
+	return allocation
 }
 
-// Example use case
-func main() {
-	tim := NewTransactionImportanceManager()
+// AddNode adds a node to the network
+func (n *Network) AddNode(id string, stake int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.Nodes[id] = &Node{
+		ID:    id,
+		Stake: stake,
+	}
+}
 
-	tim.AddParticipant("user1", 100)
-	tim.AddParticipant("user2", 200)
-	tim.AddParticipant("user3", 150)
+// RemoveNode removes a node from the network
+func (n *Network) RemoveNode(id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	_, exists := n.Nodes[id]
+	if !exists {
+		return errors.New("node not found")
+	}
+	delete(n.Nodes, id)
+	return nil
+}
 
-	tim.AddTransaction(&transaction.Transaction{ID: "tx1", Value: big.NewInt(1000), Sender: "user1"}, 10, 100)
-	tim.AddTransaction(&transaction.Transaction{ID: "tx2", Value: big.NewInt(500), Sender: "user2"}, 20, 200)
-	tim.AddTransaction(&transaction.Transaction{ID: "tx3", Value: big.NewInt(1500), Sender: "user3"}, 30, 150)
+// GetNodeStake returns the current stake of a node
+func (n *Network) GetNodeStake(id string) (int, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	node, exists := n.Nodes[id]
+	if !exists {
+		return 0, errors.New("node not found")
+	}
+	return node.Stake, nil
+}
 
-	allocatedTransactions, err := tim.AllocateResources()
-	if err != nil {
-		fmt.Println("Error allocating resources:", err)
-		return
+// ListNodes lists all nodes in the network
+func (n *Network) ListNodes() []*Node {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	nodes := []*Node{}
+	for _, node := range n.Nodes {
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+// AllocateResourcesBasedOnStake allocates resources to nodes based on their stakes
+func (n *Network) AllocateResourcesBasedOnStake(totalResources int) map[string]int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	allocation := make(map[string]int)
+	totalStake := 0
+
+	for _, node := range n.Nodes {
+		totalStake += node.Stake
 	}
 
-	fmt.Println("Allocated transactions:")
-	for _, tx := range allocatedTransactions {
-		fmt.Printf("Transaction ID: %s, Sender: %s, Value: %s\n", tx.ID, tx.Sender, tx.Value.String())
+	for id, node := range n.Nodes {
+		allocation[id] = int(float64(node.Stake) / float64(totalStake) * float64(totalResources))
 	}
 
-	reputation, err := tim.UpdateParticipant("user2", 250)
-	if err != nil {
-		fmt.Println("Error updating participant reputation:", err)
-		return
-	}
-	fmt.Printf("User2's updated reputation: %d\n", reputation)
+	return allocation
 }

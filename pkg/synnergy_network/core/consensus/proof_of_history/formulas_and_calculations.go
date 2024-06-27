@@ -1,62 +1,72 @@
-package proof_of_history
+package consensus
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
+	"math/big"
 	"time"
 )
 
-// HashFunction represents the cryptographic hash function used in PoH
-func HashFunction(data []byte) string {
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+// PoHCalculator handles the generation of hashes and timestamps for transactions.
+type PoHCalculator struct {
+	Seed         string
+	CurrentHash  string
+	LastBlockHash string
+	BlockInterval time.Duration
 }
 
-// GenerateTimestamp creates a timestamp based on the previous timestamp and the transaction data
-func GenerateTimestamp(prevTimestamp string, data string) string {
-	input := prevTimestamp + data
-	return HashFunction([]byte(input))
-}
-
-// ValidateTimestamp ensures that the provided timestamp is valid in the sequence
-func ValidateTimestamp(prevTimestamp, currentTimestamp, data string) bool {
-	expectedTimestamp := GenerateTimestamp(prevTimestamp, data)
-	return expectedTimestamp == currentTimestamp
-}
-
-// DynamicTimestampAdjustment adjusts the timestamping interval based on current network conditions
-func DynamicTimestampAdjustment(currentLoad int) time.Duration {
-	baseInterval := time.Millisecond * 500 // Default timestamping interval
-	if currentLoad > 1000 {
-		return baseInterval / 2 // Increase the frequency of timestamping
+// NewPoHCalculator initializes a PoH calculator with a seed for the hash chain.
+func NewPoHCalculator(seed string) *PoHCalculator {
+	return &PoHCalculator{
+		Seed:         seed,
+		CurrentHash:  seed,
+		LastBlockHash: "",
+		BlockInterval: 10 * time.Second, // Default interval between blocks.
 	}
-	return baseInterval
 }
 
-// RewardCalculation computes the rewards for block validation and transaction processing
-func RewardCalculation(numberOfTransactions int, isValidator bool) float64 {
-	baseReward := 10.0 // Base reward for participating in the network
-	if isValidator {
-		return baseReward + float64(numberOfTransactions)*0.01 // Additional rewards based on transaction volume
+// GenerateNextHash produces a new hash based on the current hash, using SHA-256.
+func (p *PoHCalculator) GenerateNextHash(transaction string) string {
+	data := p.CurrentHash + transaction
+	hash := sha256.Sum256([]byte(data))
+	p.CurrentHash = hex.EncodeToString(hash[:])
+	return p.CurrentHash
+}
+
+// CalculateHashChain generates a chain of hashes for a slice of transactions.
+func (p *PoHCalculator) CalculateHashChain(transactions []string) []string {
+	var hashList []string
+	for _, transaction := range transactions {
+		hash := p.GenerateNextHash(transaction)
+		hashList = append(hashList, hash)
 	}
-	return 0
+	return hashList
 }
 
-func main() {
-	// Example usage of the PoH module
-	prevTimestamp := "0000000000000000000000000000000000000000000000000000000000000000"
-	data := "Example transaction data"
-	currentTimestamp := GenerateTimestamp(prevTimestamp, data)
-	fmt.Println("Generated Timestamp:", currentTimestamp)
-
-	valid := ValidateTimestamp(prevTimestamp, currentTimestamp, data)
-	fmt.Println("Is Timestamp Valid?:", valid)
-
-	load := 1500
-	adjustment := DynamicTimestampAdjustment(load)
-	fmt.Println("Adjusted Timestamp Interval:", adjustment)
-
-	reward := RewardCalculation(250, true)
-	fmt.Println("Calculated Reward:", reward)
+// ValidateHashChain checks the integrity of a chain of transaction hashes.
+func (p *PoHCalculator) ValidateHashChain(transactions []string, expectedHashes []string) bool {
+	for i, transaction := range transactions {
+		hash := p.GenerateNextHash(transaction)
+		if hash != expectedHashes[i] {
+			return false
+		}
+	}
+	return true
 }
+
+// AnchorTimestampsToBlocks links transaction timestamps to specific blockchain blocks.
+func (p *PoHCalculator) AnchorTimestampsToBlocks(timestamps []time.Time) []big.Int {
+	var blockNumbers []big.Int
+	for _, timestamp := range timestamps {
+		blockNumber := big.NewInt(0)
+		blockNumber.SetUint64(uint64(timestamp.UnixNano() / int64(p.BlockInterval)))
+		blockNumbers = append(blockNumbers, *blockNumber)
+	}
+	return blockNumbers
+}
+
+// UpdateBlockInterval dynamically adjusts the interval between blocks based on network conditions.
+func (p *PoHCalculator) UpdateBlockInterval(newInterval time.Duration) {
+	p.BlockInterval = newInterval
+}
+
