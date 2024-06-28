@@ -1,178 +1,111 @@
 package authentication
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base32"
-	"fmt"
-	"image/png"
-	"io"
+	"errors"
 	"net/http"
-	"time"
-
-	"github.com/pquerna/otp"
-	"github.com/pquerna/otp/totp"
-	"golang.org/x/crypto/argon2"
+	"github.com/synnergy-network/blockchain/crypto"
+	"github.com/synnergy-network/wallet/security"
 )
 
-// MultiFactorAuth provides methods for generating and verifying multi-factor authentication codes
-type MultiFactorAuth struct {
-	issuer string
+// MultiFactorAuthenticator manages the multi-factor authentication process.
+type MultiFactorAuthenticator struct {
+	userDatabase UserDatabase
+	totpProvider TOTPProvider
+	smsProvider  SMSProvider
 }
 
-// NewMultiFactorAuth creates a new instance of MultiFactorAuth
-func NewMultiFactorAuth(issuer string) *MultiFactorAuth {
-	return &MultiFactorAuth{
-		issuer: issuer,
+// UserDatabase provides access to user data storage.
+type UserDatabase interface {
+	GetUser(username string) (*User, error)
+	SaveUser(user *User) error
+}
+
+// TOTPProvider defines an interface for TOTP (Time-based One-Time Password).
+type TOTPProvider interface {
+	GenerateSecret() string
+	ValidateTOTP(secret, token string) bool
+}
+
+// SMSProvider sends SMS messages for SMS-based authentication.
+type SMSProvider interface {
+	SendSMS(phoneNumber, message string) error
+}
+
+// User holds data related to a user account.
+type User struct {
+	Username      string
+	PasswordHash  string
+	TOTPSecret    string
+	PhoneNumber   string
+	Email         string
+	IsVerified    bool
+}
+
+// NewMultiFactorAuthenticator creates a new instance of MultiFactorAuthenticator.
+func NewMultiFactorAuthenticator(db UserDatabase, totp TOTPProvider, sms SMSProvider) *MultiFactorAuthenticator {
+	return &MultiFactorAuthenticator{
+		userDatabase: db,
+		totpProvider: totp,
+		smsProvider:  sms,
 	}
 }
 
-// GenerateKey generates a new TOTP key for a user
-func (mfa *MultiFactorAuth) GenerateKey(username string) (string, string, error) {
-	key, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      mfa.issuer,
-		AccountName: username,
-	})
-	if err != nil {
-		return "", "", err
+// RegisterNewUser handles registration of new users including TOTP setup.
+func (mfa *MultiFactorAuthenticator) RegisterNewUser(username, password, phoneNumber string) error {
+	passwordHash := crypto.HashPassword(password)
+	totpSecret := mfa.totpProvider.GenerateSecret()
+
+	user := &User{
+		Username:     username,
+		PasswordHash: passwordHash,
+		TOTPSecret:   totpSecret,
+		PhoneNumber:  phoneNumber,
+		Email:        "",
+		IsVerified:   false,
 	}
-	return key.Secret(), key.URL(), nil
+
+	if err := mfa.userDatabase.SaveUser(user); err != nil {
+		return err
+	}
+
+	// Send SMS to verify phone number
+	verificationCode := "123456" // This should be generated dynamically
+	return mfa.smsProvider.SendSMS(phoneNumber, "Your verification code is: "+verificationCode)
 }
 
-// GenerateQRCode generates a QR code for the TOTP key
-func (mfa *MultiFactorAuth) GenerateQRCode(w io.Writer, url string) error {
-	key, err := otp.NewKeyFromURL(url)
+// VerifyTOTP checks the provided TOTP against the stored secret.
+func (mfa *MultiFactorAuthenticator) VerifyTOTP(username, token string) error {
+	user, err := mfa.userDatabase.GetUser(username)
 	if err != nil {
 		return err
 	}
-	img, err := key.Image(200, 200)
+
+	if mfa.totpProvider.ValidateTOTP(user.TOTPSecret, token) {
+		user.IsVerified = true
+		return mfa.userDatabase.SaveUser(user)
+	}
+
+	return errors.New("invalid TOTP token")
+}
+
+// Login performs multi-factor authentication using password and TOTP.
+func (mfa *MultiFactorAuthenticator) Login(username, password, token string) error {
+	user, err := mfa.userDatabase.GetUser(username)
 	if err != nil {
 		return err
 	}
-	return png.Encode(w, img)
-}
 
-// VerifyCode verifies a TOTP code
-func (mfa *MultiFactorAuth) VerifyCode(secret, code string) bool {
-	return totp.Validate(code, secret)
-}
-
-// HashPassword hashes a password using Argon2
-func HashPassword(password string, salt []byte) []byte {
-	return argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
-}
-
-// VerifyPassword verifies a password against a given hash and salt
-func VerifyPassword(password string, hash, salt []byte) bool {
-	return string(hash) == string(argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32))
-}
-
-// GenerateSalt generates a new random salt
-func GenerateSalt() ([]byte, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, err
-	}
-	return salt, nil
-}
-
-// GenerateRecoveryToken generates a recovery token
-func GenerateRecoveryToken() (string, error) {
-	token := make([]byte, 10)
-	if _, err := rand.Read(token); err != nil {
-		return "", err
-	}
-	return base32.StdEncoding.EncodeToString(token), nil
-}
-
-// Middleware for HTTP handlers to enforce multi-factor authentication
-func (mfa *MultiFactorAuth) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		username, password, ok := r.BasicAuth()
-		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		// Retrieve stored password hash and salt for the user (dummy data for illustration)
-		storedHash := []byte{ /* fetch from secure storage */ }
-		storedSalt := []byte{ /* fetch from secure storage */ }
-		totpSecret := "" // fetch from secure storage
-
-		if !VerifyPassword(password, storedHash, storedSalt) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		// Enforce TOTP verification
-		code := r.URL.Query().Get("totp_code")
-		if !mfa.VerifyCode(totpSecret, code) {
-			http.Error(w, "Invalid TOTP code", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// Example usage of MultiFactorAuth and multi-factor authentication
-func exampleUsage() {
-	issuer := "Synthron"
-	mfa := NewMultiFactorAuth(issuer)
-
-	// Generate TOTP key for a user
-	username := "user@example.com"
-	secret, url, err := mfa.GenerateKey(username)
-	if err != nil {
-		fmt.Printf("Error generating TOTP key: %v\n", err)
-		return
-	}
-	fmt.Printf("Generated TOTP secret: %s\n", secret)
-	fmt.Printf("Generated TOTP URL: %s\n", url)
-
-	// Generate a QR code for the TOTP key
-	// Save QR code to file
-	file, err := os.Create("totp_qr.png")
-	if err != nil {
-		fmt.Printf("Error creating file: %v\n", err)
-		return
-	}
-	defer file.Close()
-
-	err = mfa.GenerateQRCode(file, url)
-	if err != nil {
-		fmt.Printf("Error generating QR code: %v\n", err)
-		return
+	if !crypto.CompareHashAndPassword(user.PasswordHash, password) {
+		return errors.New("invalid username or password")
 	}
 
-	// Verify a TOTP code
-	code := "123456" // This should be fetched from the user input in real application
-	isValid := mfa.VerifyCode(secret, code)
-	fmt.Printf("TOTP code is valid: %v\n", isValid)
-
-	// Hash a password
-	password := "securepassword"
-	salt, err := GenerateSalt()
-	if err != nil {
-		fmt.Printf("Error generating salt: %v\n", err)
-		return
+	if !mfa.totpProvider.ValidateTOTP(user.TOTPSecret, token) {
+		return errors.New("invalid TOTP token")
 	}
-	hashedPassword := HashPassword(password, salt)
-	fmt.Printf("Hashed password: %x\n", hashedPassword)
 
-	// Verify the password
-	isPasswordValid := VerifyPassword(password, hashedPassword, salt)
-	fmt.Printf("Password is valid: %v\n", isPasswordValid)
-
-	// Generate a recovery token
-	recoveryToken, err := GenerateRecoveryToken()
-	if err != nil {
-		fmt.Printf("Error generating recovery token: %v\n", err)
-		return
+	if !user.IsVerified {
+		return errors.New("user not verified")
 	}
-	fmt.Printf("Generated recovery token: %s\n", recoveryToken)
-}
 
-func main() {
-	exampleUsage()
+	return nil
 }

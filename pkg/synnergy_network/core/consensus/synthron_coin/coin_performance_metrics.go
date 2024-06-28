@@ -1,125 +1,76 @@
 package synthron_coin
 
 import (
-    "crypto/sha256"
-    "encoding/hex"
-    "sync"
-    "time"
+	"time"
+
+	"synnergy_network_blockchain/pkg/synnergy_network/core/utils"
 )
 
-// PerformanceMetrics tracks and reports performance metrics for the Synthron blockchain
+// PerformanceMetrics encapsulates various performance metrics of the Synthron Coin within the network.
 type PerformanceMetrics struct {
-    TotalBlocksMined          int64
-    TotalTransactionsProcessed int64
-    TotalCoinsMined           int64
-    TotalCoinsBurned          int64
-    AverageBlockTime          float64
-    TotalStakedCoins          int64
-    TotalValidators           int64
-    TransactionFeesCollected  int64
-    BlockTimes                []time.Duration
-    mu                        sync.Mutex
+	TransactionThroughput      float64 // Transactions per second
+	CirculationVelocity        float64 // Rate at which coins change hands
+	NetworkParticipationRate   float64 // Percentage of active nodes relative to total nodes
+	AverageTransactionValue    float64 // Average value of transactions
+	BlockchainGrowthRate       float64 // Rate at which the size of the blockchain is increasing
+	StakeParticipationRatio    float64 // Ratio of staked coins to total circulating supply
+	TransactionConfirmationTime float64 // Average time it takes to confirm a transaction
 }
 
-// NewPerformanceMetrics initializes a new PerformanceMetrics instance
-func NewPerformanceMetrics() *PerformanceMetrics {
-    return &PerformanceMetrics{
-        BlockTimes: make([]time.Duration, 0),
-    }
+// CalculateTransactionThroughput calculates the number of transactions per unit time.
+func (pm *PerformanceMetrics) CalculateTransactionThroughput(transactions int, duration time.Duration) {
+	pm.TransactionThroughput = float64(transactions) / duration.Seconds()
 }
 
-// UpdateBlockMined updates the performance metrics when a new block is mined
-func (pm *PerformanceMetrics) UpdateBlockMined(coinsMined int64, transactionsProcessed int64, blockTime time.Duration, feesCollected int64) {
-    pm.mu.Lock()
-    defer pm.mu.Unlock()
-
-    pm.TotalBlocksMined++
-    pm.TotalCoinsMined += coinsMined
-    pm.TotalTransactionsProcessed += transactionsProcessed
-    pm.TransactionFeesCollected += feesCollected
-    pm.BlockTimes = append(pm.BlockTimes, blockTime)
-    pm.AverageBlockTime = pm.calculateAverageBlockTime()
+// UpdateCirculationVelocity updates the rate at which coins change hands within the network.
+func (pm *PerformanceMetrics) UpdateCirculationVelocity(transactions []Transaction, totalSupply float64) {
+	var totalTransactionVolume float64
+	for _, tx := range transactions {
+		totalTransactionVolume += tx.Amount
+	}
+	pm.CirculationVelocity = totalTransactionVolume / totalSupply
 }
 
-// UpdateCoinsBurned updates the performance metrics when coins are burned
-func (pm *PerformanceMetrics) UpdateCoinsBurned(coinsBurned int64) {
-    pm.mu.Lock()
-    defer pm.mu.Unlock()
-
-    pm.TotalCoinsBurned += coinsBurned
+// EvaluateNetworkParticipation evaluates the active participation of nodes in the network.
+func (pm *PerformanceMetrics) EvaluateNetworkParticipation(activeNodes, totalNodes int) {
+	pm.NetworkParticipationRate = float64(activeNodes) / float64(totalNodes) * 100
 }
 
-// UpdateStakedCoins updates the performance metrics when coins are staked
-func (pm *PerformanceMetrics) UpdateStakedCoins(stakedCoins int64) {
-    pm.mu.Lock()
-    defer pm.mu.Unlock()
-
-    pm.TotalStakedCoins += stakedCoins
+// AssessTransactionValue calculates the average value of transactions processed.
+func (pm *PerformanceMetrics) AssessTransactionValue(transactions []Transaction) {
+	var totalValue float64
+	for _, tx := range transactions {
+		totalValue += tx.Amount
+	}
+	pm.AverageTransactionValue = totalValue / float64(len(transactions))
 }
 
-// UpdateValidators updates the number of validators
-func (pm *PerformanceMetrics) UpdateValidators(validators int64) {
-    pm.mu.Lock()
-    defer pm.mu.Unlock()
-
-    pm.TotalValidators = validators
+// MonitorBlockchainGrowth monitors the growth rate of the blockchain's size.
+func (pm *PerformanceMetrics) MonitorBlockchainGrowth(currentSize, previousSize float64, duration time.Duration) {
+	pm.BlockchainGrowthRate = (currentSize - previousSize) / previousSize / duration.Hours()
 }
 
-// calculateAverageBlockTime calculates the average time taken to mine blocks
-func (pm *PerformanceMetrics) calculateAverageBlockTime() float64 {
-    totalDuration := time.Duration(0)
-    for _, bt := range pm.BlockTimes {
-        totalDuration += bt
-    }
-    if len(pm.BlockTimes) == 0 {
-        return 0
-    }
-    return totalDuration.Seconds() / float64(len(pm.BlockTimes))
+// CalculateStakeParticipation calculates the ratio of staked coins to the total circulating supply.
+func (pm *PerformanceMetrics) CalculateStakeParticipation(stakedCoins, totalSupply float64) {
+	pm.StakeParticipationRatio = stakedCoins / totalSupply
 }
 
-// GetHash generates a hash of the current performance metrics for integrity checks
-func (pm *PerformanceMetrics) GetHash() string {
-    pm.mu.Lock()
-    defer pm.mu.Unlock()
-
-    metricsData := struct {
-        TotalBlocksMined          int64
-        TotalTransactionsProcessed int64
-        TotalCoinsMined           int64
-        TotalCoinsBurned          int64
-        AverageBlockTime          float64
-        TotalStakedCoins          int64
-        TotalValidators           int64
-        TransactionFeesCollected  int64
-    }{
-        TotalBlocksMined:          pm.TotalBlocksMined,
-        TotalTransactionsProcessed: pm.TotalTransactionsProcessed,
-        TotalCoinsMined:           pm.TotalCoinsMined,
-        TotalCoinsBurned:          pm.TotalCoinsBurned,
-        AverageBlockTime:          pm.AverageBlockTime,
-        TotalStakedCoins:          pm.TotalStakedCoins,
-        TotalValidators:           pm.TotalValidators,
-        TransactionFeesCollected:  pm.TransactionFeesCollected,
-    }
-
-    hash := sha256.New()
-    hash.Write([]byte(fmt.Sprintf("%v", metricsData)))
-    return hex.EncodeToString(hash.Sum(nil))
+// MeasureTransactionConfirmationTime measures the average time taken for transactions to be confirmed.
+func (pm *PerformanceMetrics) MeasureTransactionConfirmationTime(transactions []Transaction) {
+	var totalTime float64
+	for _, tx := range transactions {
+		totalTime += time.Since(tx.Timestamp).Seconds()
+	}
+	pm.TransactionConfirmationTime = totalTime / float64(len(transactions))
 }
 
-// ReportMetrics returns a report of the current performance metrics
-func (pm *PerformanceMetrics) ReportMetrics() map[string]interface{} {
-    pm.mu.Lock()
-    defer pm.mu.Unlock()
-
-    return map[string]interface{}{
-        "TotalBlocksMined":          pm.TotalBlocksMined,
-        "TotalTransactionsProcessed": pm.TotalTransactionsProcessed,
-        "TotalCoinsMined":           pm.TotalCoinsMined,
-        "TotalCoinsBurned":          pm.TotalCoinsBurned,
-        "AverageBlockTime":          pm.AverageBlockTime,
-        "TotalStakedCoins":          pm.TotalStakedCoins,
-        "TotalValidators":           pm.TotalValidators,
-        "TransactionFeesCollected":  pm.TransactionFeesCollected,
-    }
+// Report generates a comprehensive report on all the performance metrics.
+func (pm *PerformanceMetrics) Report() {
+	utils.Log("Transaction Throughput:", pm.TransactionThroughput)
+	utils.Log("Circulation Velocity:", pm.CirculationVelocity)
+	utils.Log("Network Participation Rate:", pm.NetworkParticipationRate)
+	utils.Log("Average Transaction Value:", pm.AverageTransactionValue)
+	utils.Log("Blockchain Growth Rate:", pm.BlockchainGrowthRate)
+	utils.Log("Stake Participation Ratio:", pm.StakeParticipationRatio)
+	utils.Log("Transaction Confirmation Time:", pm.TransactionConfirmationTime)
 }

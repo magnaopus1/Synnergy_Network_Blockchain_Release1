@@ -7,195 +7,125 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
-	"log"
-	"sync"
-	"time"
 
 	"golang.org/x/crypto/argon2"
 )
 
-// SecurityMeasures handles the security measures for the Synthron Coin
-type SecurityMeasures struct {
-	EncryptionKey      []byte
-	TransactionLock    sync.Mutex
-	BlockLock          sync.Mutex
-	StakeLock          sync.Mutex
-	ValidatorLock      sync.Mutex
-	Validators         map[string]bool
-	TransactionHistory map[string]TransactionRecord
+// SecurityConfig stores the configuration for various security mechanisms.
+type SecurityConfig struct {
+	SaltLength       int
+	KeyLength        int
+	ArgonIterations  int
+	ArgonMemory      uint32
+	ArgonParallelism uint8
+	ArgonSaltLength  uint32
+	ArgonKeyLength   uint32
+	ArgonTime        uint32
 }
 
-// TransactionRecord represents a record of a transaction for verification purposes
-type TransactionRecord struct {
-	Timestamp time.Time
-	Amount    int64
-	Sender    string
-	Receiver  string
-	Hash      string
-}
-
-// NewSecurityMeasures initializes a new instance of SecurityMeasures with a given encryption key
-func NewSecurityMeasures(encryptionKey string) *SecurityMeasures {
-	return &SecurityMeasures{
-		EncryptionKey:      []byte(encryptionKey),
-		Validators:         make(map[string]bool),
-		TransactionHistory: make(map[string]TransactionRecord),
+// DefaultSecurityConfig returns a default configuration for security parameters.
+func DefaultSecurityConfig() *SecurityConfig {
+	return &SecurityConfig{
+		SaltLength:       16,
+		KeyLength:        32,
+		ArgonIterations:  4,
+		ArgonMemory:      64 * 1024,
+		ArgonParallelism: 4,
+		ArgonSaltLength:  16,
+		ArgonKeyLength:   32,
+		ArgonTime:        1,
 	}
 }
 
-// GenerateKey generates a secure encryption key using Argon2
-func GenerateKey(password, salt []byte) []byte {
-	return argon2.IDKey(password, salt, 1, 64*1024, 4, 32)
+// GenerateSalt generates a random salt of the given length.
+func GenerateSalt(length int) ([]byte, error) {
+	salt := make([]byte, length)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
+	return salt, nil
 }
 
-// Encrypt encrypts plaintext using AES-GCM with the encryption key
-func (sm *SecurityMeasures) Encrypt(plaintext string) (string, error) {
-	block, err := aes.NewCipher(sm.EncryptionKey)
+// HashPassword hashes a password using Argon2.
+func HashPassword(password string, config *SecurityConfig) (string, error) {
+	salt, err := GenerateSalt(int(config.ArgonSaltLength))
 	if err != nil {
 		return "", err
 	}
+	hash := argon2.IDKey([]byte(password), salt, config.ArgonTime, config.ArgonMemory, config.ArgonParallelism, config.ArgonKeyLength)
+	return hex.EncodeToString(hash), nil
+}
 
-	aesGCM, err := cipher.NewGCM(block)
+// EncryptData encrypts data using AES-256-GCM.
+func EncryptData(data []byte, passphrase string) ([]byte, error) {
+	key := sha256.Sum256([]byte(passphrase))
+	block, err := aes.NewCipher(key[:])
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	nonce := make([]byte, aesGCM.NonceSize())
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	ciphertext := aesGCM.Seal(nonce, nonce, []byte(plaintext), nil)
-	return hex.EncodeToString(ciphertext), nil
+	ciphertext := gcm.Seal(nonce, nonce, data, nil)
+	return ciphertext, nil
 }
 
-// Decrypt decrypts ciphertext using AES-GCM with the encryption key
-func (sm *SecurityMeasures) Decrypt(ciphertext string) (string, error) {
-	data, err := hex.DecodeString(ciphertext)
+// DecryptData decrypts data using AES-256-GCM.
+func DecryptData(ciphertext []byte, passphrase string) ([]byte, error) {
+	key := sha256.Sum256([]byte(passphrase))
+	block, err := aes.NewCipher(key[:])
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	block, err := aes.NewCipher(sm.EncryptionKey)
+	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	aesGCM, err := cipher.NewGCM(block)
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, errors.New("ciphertext too short")
+	}
+
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	nonceSize := aesGCM.NonceSize()
-	if len(data) < nonceSize {
-		return "", errors.New("ciphertext too short")
-	}
+	return plaintext, nil
+}
 
-	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
+// ValidateHash compares a hash with a password to see if they match.
+func ValidateHash(password, hash string, config *SecurityConfig) (bool, error) {
+	// Extract the salt from the hash
+	salt, err := hex.DecodeString(hash[:config.SaltLength*2]) // Salt length in bytes, hex encoded
 	if err != nil {
-		return "", err
+		return false, err
 	}
 
-	return string(plaintext), nil
-}
-
-// ValidateTransaction ensures the integrity and validity of a transaction
-func (sm *SecurityMeasures) ValidateTransaction(txID string) (bool, error) {
-	sm.TransactionLock.Lock()
-	defer sm.TransactionLock.Unlock()
-
-	txRecord, exists := sm.TransactionHistory[txID]
-	if !exists {
-		return false, errors.New("transaction not found")
-	}
-
-	expectedHash := sm.generateTransactionHash(txRecord)
-	if expectedHash != txRecord.Hash {
-		return false, errors.New("transaction hash mismatch")
-	}
-
-	return true, nil
-}
-
-// AddTransaction adds a new transaction to the transaction history
-func (sm *SecurityMeasures) AddTransaction(amount int64, sender, receiver string) (string, error) {
-	sm.TransactionLock.Lock()
-	defer sm.TransactionLock.Unlock()
-
-	txID := sm.generateTransactionID(sender, receiver, amount)
-	txRecord := TransactionRecord{
-		Timestamp: time.Now(),
-		Amount:    amount,
-		Sender:    sender,
-		Receiver:  receiver,
-		Hash:      sm.generateTransactionHash(TransactionRecord{Timestamp: time.Now(), Amount: amount, Sender: sender, Receiver: receiver}),
-	}
-
-	sm.TransactionHistory[txID] = txRecord
-	return txID, nil
-}
-
-// generateTransactionID generates a unique transaction ID
-func (sm *SecurityMeasures) generateTransactionID(sender, receiver string, amount int64) string {
-	data := fmt.Sprintf("%s%s%d%d", sender, receiver, amount, time.Now().UnixNano())
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:])
-}
-
-// generateTransactionHash generates a hash for a transaction
-func (sm *SecurityMeasures) generateTransactionHash(record TransactionRecord) string {
-	data := fmt.Sprintf("%s%d%s%s", record.Timestamp, record.Amount, record.Sender, record.Receiver)
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:])
-}
-
-// AddValidator adds a new validator to the network
-func (sm *SecurityMeasures) AddValidator(validatorID string) {
-	sm.ValidatorLock.Lock()
-	defer sm.ValidatorLock.Unlock()
-
-	sm.Validators[validatorID] = true
-}
-
-// RemoveValidator removes a validator from the network
-func (sm *SecurityMeasures) RemoveValidator(validatorID string) {
-	sm.ValidatorLock.Lock()
-	defer sm.ValidatorLock.Unlock()
-
-	delete(sm.Validators, validatorID)
-}
-
-// IsValidator checks if a given ID is a validator
-func (sm *SecurityMeasures) IsValidator(validatorID string) bool {
-	sm.ValidatorLock.Lock()
-	defer sm.ValidatorLock.Unlock()
-
-	return sm.Validators[validatorID]
-}
-
-// EncryptTransactionData encrypts transaction data for secure transmission
-func (sm *SecurityMeasures) EncryptTransactionData(txData string) (string, error) {
-	encryptedData, err := sm.Encrypt(txData)
+	// Compute the hash of the password using the same salt
+	computedHash, err := HashPassword(password, config)
 	if err != nil {
-		return "", err
+		return false, err
 	}
-	return encryptedData, nil
+
+	// Compare the hashes
+	return hash == computedHash, nil
 }
 
-// DecryptTransactionData decrypts transaction data for verification
-func (sm *SecurityMeasures) DecryptTransactionData(encryptedData string) (string, error) {
-	decryptedData, err := sm.Decrypt(encryptedData)
-	if err != nil {
-		return "", err
-	}
-	return decryptedData, nil
-}
-
-// LogSecurityEvent logs security events for auditing
-func (sm *SecurityMeasures) LogSecurityEvent(event string) {
-	log.Printf("Security Event: %s", event)
+// SetupSecurity measures setup the security parameters on startup.
+func SetupSecurity(config *SecurityConfig) {
+	// This would be run on initialization to configure the security settings.
 }
 

@@ -1,124 +1,76 @@
 package analytics
 
 import (
-	"fmt"
+	"encoding/json"
+	"sync"
 	"time"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/transaction/transaction_types"
-	"github.com/synthron_blockchain_final/pkg/layer0/core/wallet"
 )
 
-// UserBehaviorAnalytics handles analytics related to user behavior in transactions.
-type UserBehaviorAnalytics struct {
-	wallets map[string]*wallet.Wallet
+// UserActivity represents a log of user actions within the wallet application.
+type UserActivity struct {
+	UserID     string    `json:"userId"`
+	Action     string    `json:"action"`
+	Timestamp  time.Time `json:"timestamp"`
+	Parameters map[string]interface{} `json:"parameters"`
 }
 
-// NewUserBehaviorAnalytics creates a new instance of UserBehaviorAnalytics.
-func NewUserBehaviorAnalytics() *UserBehaviorAnalytics {
-	return &UserBehaviorAnalytics{
-		wallets: make(map[string]*wallet.Wallet),
+// UserBehaviourAnalyticsService provides functionality to track and analyze user behavior.
+type UserBehaviourAnalyticsService struct {
+	Activities []UserActivity
+	mu         sync.Mutex
+}
+
+// NewUserBehaviourAnalyticsService initializes a new service for user behavior analytics.
+func NewUserBehaviourAnalyticsService() *UserBehaviourAnalyticsService {
+	return &UserBehaviourAnalyticsService{
+		Activities: make([]UserActivity, 0),
 	}
 }
 
-// AddWallet adds a wallet to the analytics tracking.
-func (uba *UserBehaviorAnalytics) AddWallet(wallet *wallet.Wallet) {
-	uba.wallets[wallet.Address] = wallet
+// LogActivity records user activities performed within the wallet application.
+func (ubas *UserBehaviourAnalyticsService) LogActivity(activity UserActivity) {
+	ubas.mu.Lock()
+	defer ubas.mu.Unlock()
+	activity.Timestamp = time.Now()
+	ubas.Activities = append(ubas.Activities, activity)
 }
 
-// TrackTransaction tracks a transaction and updates the relevant analytics.
-func (uba *UserBehaviorAnalytics) TrackTransaction(tx transaction_types.Transaction) {
-	if wallet, exists := uba.wallets[tx.FromAddress]; exists {
-		wallet.AddTransaction(tx)
-	}
-	if wallet, exists := uba.wallets[tx.ToAddress]; exists {
-		wallet.AddTransaction(tx)
-	}
-}
-
-// AnalyzeSpendingPatterns analyzes the spending patterns of a specific wallet over a specified period.
-func (uba *UserBehaviorAnalytics) AnalyzeSpendingPatterns(walletAddress string, start, end time.Time) {
-	wallet, exists := uba.wallets[walletAddress]
-	if !exists {
-		fmt.Printf("Wallet with address %s not found.\n", walletAddress)
-		return
-	}
-
-	totalSpent := 0.0
-	for _, tx := range wallet.Transactions {
-		if tx.Timestamp.After(start) && tx.Timestamp.Before(end) && tx.FromAddress == walletAddress {
-			totalSpent += tx.Amount
+// GetUserActivities returns a list of activities for a specific user.
+func (ubas *UserBehaviourAnalyticsService) GetUserActivities(userID string) []UserActivity {
+	ubas.mu.Lock()
+	defer ubas.mu.Unlock()
+	var userActivities []UserActivity
+	for _, activity := range ubas.Activities {
+		if activity.UserID == userID {
+			userActivities = append(userActivities, activity)
 		}
 	}
-	fmt.Printf("Total spent by wallet %s from %s to %s: %f\n", walletAddress, start, end, totalSpent)
+	return userActivities
 }
 
-// AnalyzeReceivingPatterns analyzes the receiving patterns of a specific wallet over a specified period.
-func (uba *UserBehaviorAnalytics) AnalyzeReceivingPatterns(walletAddress string, start, end time.Time) {
-	wallet, exists := uba.wallets[walletAddress]
-	if !exists {
-		fmt.Printf("Wallet with address %s not found.\n", walletAddress)
-		return
+// AnalyzePatterns identifies patterns and trends in user behavior.
+func (ubas *UserBehaviourAnalyticsService) AnalyzePatterns() map[string]interface{} {
+	ubas.mu.Lock()
+	defer ubas.mu.Unlock()
+	// Example: Analyze common actions or detect sudden changes in behavior
+	patterns := make(map[string]int)
+	for _, activity := range ubas.Activities {
+		patterns[activity.Action]++
 	}
-
-	totalReceived := 0.0
-	for _, tx := range wallet.Transactions {
-		if tx.Timestamp.After(start) && tx.Timestamp.Before(end) && tx.ToAddress == walletAddress {
-			totalReceived += tx.Amount
+	// Convert counts to more sophisticated analysis, if needed
+	analysisResults := make(map[string]interface{})
+	for action, count := range patterns {
+		analysisResults[action] = map[string]interface{}{
+			"count": count,
+			"trends": "Increasing", // Placeholder for trend analysis
 		}
 	}
-	fmt.Printf("Total received by wallet %s from %s to %s: %f\n", walletAddress, start, end, totalReceived)
+	return analysisResults
 }
 
-// IdentifyFrequentContacts identifies the most frequent transaction partners of a specific wallet.
-func (uba *UserBehaviorAnalytics) IdentifyFrequentContacts(walletAddress string) {
-	wallet, exists := uba.wallets[walletAddress]
-	if !exists {
-		fmt.Printf("Wallet with address %s not found.\n", walletAddress)
-		return
-	}
-
-	contactFrequency := make(map[string]int)
-	for _, tx := range wallet.Transactions {
-		if tx.FromAddress == walletAddress {
-			contactFrequency[tx.ToAddress]++
-		}
-		if tx.ToAddress == walletAddress {
-			contactFrequency[tx.FromAddress]++
-		}
-	}
-
-	fmt.Printf("Frequent contacts of wallet %s:\n", walletAddress)
-	for contact, frequency := range contactFrequency {
-		fmt.Printf("Address: %s, Frequency: %d\n", contact, frequency)
-	}
-}
-
-// DetectSuspiciousActivity detects suspicious activity based on transaction patterns.
-func (uba *UserBehaviorAnalytics) DetectSuspiciousActivity(walletAddress string, threshold float64) {
-	wallet, exists := uba.wallets[walletAddress]
-	if !exists {
-		fmt.Printf("Wallet with address %s not found.\n", walletAddress)
-		return
-	}
-
-	for _, tx := range wallet.Transactions {
-		if tx.Amount > threshold {
-			fmt.Printf("Suspicious transaction detected: %v\n", tx)
-		}
-	}
-}
-
-// GenerateUserBehaviorReport generates a comprehensive report of user behavior over a specified period.
-func (uba *UserBehaviorAnalytics) GenerateUserBehaviorReport(walletAddress string, start, end time.Time) {
-	wallet, exists := uba.wallets[walletAddress]
-	if !exists {
-		fmt.Printf("Wallet with address %s not found.\n", walletAddress)
-		return
-	}
-
-	fmt.Printf("User Behavior Report for wallet %s from %s to %s:\n", walletAddress, start, end)
-	uba.AnalyzeSpendingPatterns(walletAddress, start, end)
-	uba.AnalyzeReceivingPatterns(walletAddress, start, end)
-	uba.IdentifyFrequentContacts(walletAddress)
-	uba.DetectSuspiciousActivity(walletAddress, 1000.0) // Example threshold
+// SerializeActivities converts the activities data to JSON for reporting.
+func (ubas *UserBehaviourAnalyticsService) SerializeActivities() ([]byte, error) {
+	ubas.mu.Lock()
+	defer ubas.mu.Unlock()
+	return json.Marshal(ubas.Activities)
 }

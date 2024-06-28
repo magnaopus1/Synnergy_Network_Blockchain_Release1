@@ -1,158 +1,134 @@
 package authentication
 
 import (
-	"context"
+	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"net/http"
+	"os"
 	"time"
 
-	"github.com/golang-jwt/jwt"
-	"golang.org/x/crypto/argon2"
-	"github.com/skip2/go-qrcode"
+	"github.com/synnergy-network/blockchain/crypto"
+	"github.com/synnergy-network/blockchain/utils"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// BiometricAuthMiddleware handles biometric authentication and JWT generation for HTTP requests.
-type BiometricAuthMiddleware struct {
-	jwtKey []byte
+// BiometricData represents the user's biometric data.
+type BiometricData struct {
+	UserID      string
+	Template    []byte
+	LastUpdated time.Time
 }
 
-// NewBiometricAuthMiddleware creates a new instance of BiometricAuthMiddleware.
-func NewBiometricAuthMiddleware(jwtKey string) *BiometricAuthMiddleware {
-	return &BiometricAuthMiddleware{
-		jwtKey: []byte(jwtKey),
+// BiometricDatabase simulates a database of biometric data.
+var BiometricDatabase = map[string]*BiometricData{}
+
+// GenerateBiometricTemplate simulates the generation of a biometric template from a sample.
+func GenerateBiometricTemplate(sample []byte) ([]byte, error) {
+	if len(sample) == 0 {
+		return nil, errors.New("biometric sample is empty")
 	}
-}
 
-// GenerateJWT generates a JWT for a given user ID.
-func (bam *BiometricAuthMiddleware) GenerateJWT(userID string) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"userID": userID,
-		"exp":    time.Now().Add(24 * time.Hour).Unix(),
-	})
-
-	tokenString, err := token.SignedString(bam.jwtKey)
+	hasher := sha256.New()
+	_, err := hasher.Write(sample)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("failed to hash biometric sample: %w", err)
 	}
 
-	return tokenString, nil
+	return hasher.Sum(nil), nil
 }
 
-// ParseJWT parses and validates a JWT, returning the user ID if valid.
-func (bam *BiometricAuthMiddleware) ParseJWT(tokenString string) (string, error) {
-	claims := &jwt.MapClaims{}
-
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return bam.jwtKey, nil
-	})
-
-	if err != nil || !token.Valid {
-		return "", err
+// SaveBiometricData saves the user's biometric template in the simulated database.
+func SaveBiometricData(userID string, template []byte) error {
+	if userID == "" {
+		return errors.New("user ID cannot be empty")
+	}
+	if len(template) == 0 {
+		return errors.New("biometric template is empty")
 	}
 
-	userID, ok := (*claims)["userID"].(string)
-	if !ok {
-		return "", fmt.Errorf("invalid token claims")
+	BiometricDatabase[userID] = &BiometricData{
+		UserID:      userID,
+		Template:    template,
+		LastUpdated: time.Now(),
 	}
-
-	return userID, nil
+	return nil
 }
 
-// Middleware is the actual middleware function to be used in HTTP handlers.
-func (bam *BiometricAuthMiddleware) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Authorization header is required", http.StatusUnauthorized)
-			return
+// AuthenticateUser authenticates a user based on biometric data sample.
+func AuthenticateUser(userID string, sample []byte) (bool, error) {
+	storedData, exists := BiometricDatabase[userID]
+	if !exists {
+		return false, fmt.Errorf("no biometric data found for user ID %s", userID)
+	}
+
+	generatedTemplate, err := GenerateBiometricTemplate(sample)
+	if err != nil {
+		return false, fmt.Errorf("failed to generate biometric template: %w", err)
+	}
+
+	err = bcrypt.CompareHashAndPassword(storedData.Template, generatedTemplate)
+	if err != nil {
+		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			return false, nil // authentication failure
 		}
-
-		authToken := strings.TrimPrefix(authHeader, "Bearer ")
-		userID, err := bam.ParseJWT(authToken)
-		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), "userID", userID)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// GenerateQRCode generates a QR code for the provided data.
-func GenerateQRCode(data string) ([]byte, error) {
-	qrCode, err := qrcode.Encode(data, qrcode.Medium, 256)
-	if err != nil {
-		return nil, err
+		return false, fmt.Errorf("error comparing biometric data: %w", err)
 	}
-	return qrCode, nil
+
+	return true, nil // authentication success
 }
 
-// HashPassword hashes a password using Argon2.
-func HashPassword(password string, salt []byte) []byte {
-	return argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
-}
-
-// VerifyPassword verifies a password against a given hash and salt.
-func VerifyPassword(password string, hash, salt []byte) bool {
-	return string(hash) == string(argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32))
-}
-
-// GenerateBiometricHash generates a hash for biometric data.
-func GenerateBiometricHash(biometricData []byte) string {
-	hash := sha256.Sum256(biometricData)
-	return hex.EncodeToString(hash[:])
-}
-
-// Example usage of the BiometricAuthMiddleware and biometric authentication
-func exampleUsage() {
-	jwtKey := "your-256-bit-secret"
-	authMiddleware := NewBiometricAuthMiddleware(jwtKey)
-
-	// Generating a JWT for a user
-	userID := "123456"
-	token, err := authMiddleware.GenerateJWT(userID)
-	if err != nil {
-		fmt.Printf("Error generating JWT: %v\n", err)
-		return
+// EncryptTemplate encrypts the biometric template using AES.
+func EncryptTemplate(template []byte) ([]byte, error) {
+	secretKey := []byte(os.Getenv("BIOMETRIC_SECRET_KEY")) // Secret key from environment variable
+	if len(secretKey) == 0 {
+		return nil, errors.New("secret key is not set for biometric encryption")
 	}
-	fmt.Printf("Generated JWT: %s\n", token)
 
-	// Parsing and validating the JWT
-	parsedUserID, err := authMiddleware.ParseJWT(token)
+	encryptedData, err := crypto.AES256Encrypt(template, secretKey)
 	if err != nil {
-		fmt.Printf("Error parsing JWT: %v\n", err)
-		return
+		return nil, fmt.Errorf("failed to encrypt biometric template: %w", err)
 	}
-	fmt.Printf("Parsed user ID: %s\n", parsedUserID)
 
-	// Hashing a password
-	password := "supersecurepassword"
-	salt := []byte("somesalt")
-	hash := HashPassword(password, salt)
-	fmt.Printf("Password hash: %x\n", hash)
-
-	// Verifying a password
-	isValid := VerifyPassword(password, hash, salt)
-	fmt.Printf("Password is valid: %v\n", isValid)
-
-	// Generating a biometric hash
-	biometricData := []byte("user-fingerprint-data")
-	biometricHash := GenerateBiometricHash(biometricData)
-	fmt.Printf("Biometric hash: %s\n", biometricHash)
-
-	// Generating a QR code
-	qrCodeData, err := GenerateQRCode("http://example.com/authenticate")
-	if err != nil {
-		fmt.Printf("Error generating QR code: %v\n", err)
-		return
-	}
-	fmt.Printf("Generated QR code: %x\n", qrCodeData)
+	return encryptedData, nil
 }
 
-func main() {
-	exampleUsage()
+// DecryptTemplate decrypts the biometric template using AES.
+func DecryptTemplate(encryptedData []byte) ([]byte, error) {
+	secretKey := []byte(os.Getenv("BIOMETRIC_SECRET_KEY")) // Secret key from environment variable
+	if len(secretKey) == 0 {
+		return nil, errors.New("secret key is not set for biometric decryption")
+	}
+
+	decryptedData, err := crypto.AES256Decrypt(encryptedData, secretKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt biometric template: %w", err)
+	}
+
+	return decryptedData, nil
 }
+
+// EncodeTemplateToBase64 encodes biometric data to a base64 string for storage.
+func EncodeTemplateToBase64(data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", errors.New("cannot encode empty biometric data to base64")
+	}
+
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// DecodeTemplateFromBase64 decodes biometric data from a base64 string.
+func DecodeTemplateFromBase64(encodedData string) ([]byte, error) {
+	if encodedData == "" {
+		return nil, errors.New("base64 string is empty")
+	}
+
+	data, err := base64.StdEncoding.DecodeString(encodedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode biometric data from base64: %w", err)
+	}
+
+	return data, nil
+}
+

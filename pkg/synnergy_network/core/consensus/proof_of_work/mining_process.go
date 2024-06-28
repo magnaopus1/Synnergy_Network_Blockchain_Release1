@@ -8,70 +8,39 @@ import (
     "errors"
     "fmt"
     "math/big"
-    "strings"
     "sync"
     "time"
 
     "golang.org/x/crypto/argon2"
     "golang.org/x/crypto/scrypt"
+    "synnergy_network_blockchain/pkg/synnergy_network/core/common"
 )
 
 type MiningProcess struct {
-    Blockchain        []*Block
-    TransactionPool   []Transaction
-    BlockReward       float64
+    Blockchain        []*common.Block
+    TransactionPool   []*common.Transaction
+    BlockReward       *big.Int
     Difficulty        int
     NetworkHashrate   float64
     MiningTarget      string
     HalvingInterval   int
     BlockInterval     time.Duration
-    MinerConfig       *MinerConfig
+    MinerConfig       *common.MinerConfig
+    PublicKeyProvider common.PublicKeyProvider
     lock              sync.Mutex
 }
 
-type MinerConfig struct {
-    Memory      uint32
-    Iterations  uint32
-    Parallelism uint8
-    SaltLength  uint32
-    KeyLength   uint32
-    Algorithm   string // Indicates current hashing algorithm
-}
-
-type Transaction struct {
-    Sender    string
-    Receiver  string
-    Amount    float64
-    Fee       float64
-    Signature string // Assuming ECDSA or similar
-}
-
-type Block struct {
-    Timestamp     int64
-    Transactions  []Transaction
-    PrevBlockHash string
-    Nonce         uint64
-    Hash          string
-}
-
 func NewMiningProcess() *MiningProcess {
-    mc := &MinerConfig{
-        Memory:      64 * 1024,
-        Iterations:  1,
-        Parallelism: 4,
-        SaltLength:  16,
-        KeyLength:   32,
-        Algorithm:   "argon2", // Default to Argon2
-    }
-
+    mc := common.DefaultMinerConfig()
     mp := &MiningProcess{
-        Blockchain:      make([]*Block, 0),
-        TransactionPool: make([]Transaction, 0),
-        BlockReward:     1252,
-        Difficulty:      16,
-        HalvingInterval: 200000,
-        BlockInterval:   10 * time.Minute,
-        MinerConfig:     mc,
+        Blockchain:        make([]*common.Block, 0),
+        TransactionPool:   make([]*common.Transaction, 0),
+        BlockReward:       big.NewInt(1252),
+        Difficulty:        16,
+        HalvingInterval:   200000,
+        BlockInterval:     10 * time.Minute,
+        MinerConfig:       mc,
+        PublicKeyProvider: common.DefaultPublicKeyProvider,
     }
     mp.calculateMiningTarget()
     return mp
@@ -83,11 +52,11 @@ func (mp *MiningProcess) calculateMiningTarget() {
     mp.MiningTarget = target.Text(16)
 }
 
-func (mp *MiningProcess) MineBlock() (*Block, error) {
+func (mp *MiningProcess) MineBlock() (*common.Block, error) {
     mp.lock.Lock()
     defer mp.lock.Unlock()
 
-    block := &Block{
+    block := &common.Block{
         Timestamp:    time.Now().Unix(),
         Transactions: mp.TransactionPool,
         PrevBlockHash: func() string {
@@ -98,18 +67,17 @@ func (mp *MiningProcess) MineBlock() (*Block, error) {
         }(),
     }
 
-    // Switch hashing algorithm if needed
     mp.switchHashingAlgorithm()
 
     for nonce := uint64(0); ; nonce++ {
-        block.Nonce = nonce
+        block.Nonce = int(nonce)
         if hash, err := mp.CalculateBlockHash(block); err == nil && mp.ValidateBlockHash(hash) {
             block.Hash = hash
             break
         }
     }
 
-    mp.TransactionPool = []Transaction{}
+    mp.TransactionPool = []*common.Transaction{}
     mp.Blockchain = append(mp.Blockchain, block)
 
     mp.adjustDifficulty()
@@ -118,25 +86,26 @@ func (mp *MiningProcess) MineBlock() (*Block, error) {
     return block, nil
 }
 
-func (mp *MiningProcess) CalculateBlockHash(block *Block) (string, error) {
-    data := fmt.Sprintf("%d:%s:%d", block.Timestamp, block.PrevBlockHash, block.Nonce)
-    salt, err := rand.Prime(rand.Reader, 128) // Generate a random prime as salt
-    if err != nil {
+func (mp *MiningProcess) CalculateBlockHash(block *common.Block) (string, error) {
+    data := blockData(block)
+    salt := make([]byte, 16)
+    if _, err := rand.Read(salt); err != nil {
         return "", err
     }
 
     var hash []byte
+    var err error
     switch mp.MinerConfig.Algorithm {
     case "argon2":
-        hash = argon2.IDKey([]byte(data), salt.Bytes(), mp.MinerConfig.Iterations, mp.MinerConfig.Memory, mp.MinerConfig.Parallelism, mp.MinerConfig.KeyLength)
+        hash = argon2.IDKey(data, salt, mp.MinerConfig.Iterations, mp.MinerConfig.Memory, mp.MinerConfig.Parallelism, mp.MinerConfig.KeyLength)
     case "scrypt":
-        hash, err = scrypt.Key([]byte(data), salt.Bytes(), int(mp.MinerConfig.Iterations), int(mp.MinerConfig.Memory), int(mp.MinerConfig.Parallelism), int(mp.MinerConfig.KeyLength))
+        hash, err = scrypt.Key(data, salt, int(mp.MinerConfig.Iterations), int(mp.MinerConfig.Memory), int(mp.MinerConfig.Parallelism), int(mp.MinerConfig.KeyLength))
         if err != nil {
             return "", err
         }
     case "sha256":
         hasher := sha256.New()
-        hasher.Write([]byte(data))
+        hasher.Write(data)
         hash = hasher.Sum(nil)
     default:
         return "", errors.New("unsupported hashing algorithm")
@@ -166,68 +135,327 @@ func (mp *MiningProcess) adjustDifficulty() {
 
 func (mp *MiningProcess) adjustBlockReward() {
     if len(mp.Blockchain)%mp.HalvingInterval == 0 && len(mp.Blockchain) > 0 {
-        mp.BlockReward /= 2
+        mp.BlockReward.Div(mp.BlockReward, big.NewInt(2))
     }
 }
 
 func (mp *MiningProcess) switchHashingAlgorithm() {
     const performanceThreshold = 1000000 // Example threshold for hashrate in H/s
 
-    // Check the current network hashrate and switch algorithms accordingly
     if mp.NetworkHashrate < performanceThreshold {
-        mp.MinerConfig.Algorithm = "scrypt" // Use Scrypt for lower energy and compute requirements
+        mp.MinerConfig.Algorithm = "scrypt"
         fmt.Println("Switched to Scrypt due to low network hashrate.")
     } else {
-        mp.MinerConfig.Algorithm = "argon2" // Default to Argon2 for enhanced security
+        mp.MinerConfig.Algorithm = "argon2"
         fmt.Println("Using Argon2 for optimal security.")
     }
 }
 
-func (mp *MiningProcess) AddTransaction(tx Transaction) error {
+func (mp *MiningProcess) AddTransaction(tx *common.Transaction) error {
     mp.lock.Lock()
     defer mp.lock.Unlock()
 
-    // Check for double spending by ensuring no other pending transaction from the same sender has the same amount and receiver
     for _, transaction := range mp.TransactionPool {
         if transaction.Sender == tx.Sender && transaction.Amount == tx.Amount && transaction.Receiver == tx.Receiver {
             return errors.New("double spending attempt detected")
         }
     }
 
-    // Validate the transaction signature
-    if !validateSignature(tx) {
+    if !mp.validateSignature(tx) {
         return errors.New("invalid transaction signature")
     }
 
-    // Add the transaction to the pool if all checks pass
     mp.TransactionPool = append(mp.TransactionPool, tx)
     fmt.Println("Transaction added successfully")
     return nil
 }
 
-func validateSignature(tx Transaction) bool {
-    // Simulate getting the public key (this should actually be fetched based on sender's address)
-    publicKey := getPublicKey(tx.Sender) // Assume this function retrieves the ECDSA public key for the sender
+func (mp *MiningProcess) validateSignature(tx *common.Transaction) bool {
+    publicKey, err := mp.PublicKeyProvider.GetPublicKey(tx.Sender)
+    if err != nil {
+        fmt.Printf("Error getting public key: %v\n", err)
+        return false
+    }
 
-    // Decode the hex signature
+    if len(tx.Signature)%2 != 0 {
+        fmt.Println("Error: Signature length is not even, cannot split R and S correctly")
+        return false
+    }
+
     sigR, sigS := new(big.Int), new(big.Int)
-    sigLen := len(tx.Signature)
-    rHex, sHex := tx.Signature[:sigLen/2], tx.Signature[sigLen/2:]
-    sigR.SetString(rHex, 16)
-    sigS.SetString(sHex, 16)
+    sigR.SetBytes(tx.Signature[:len(tx.Signature)/2])
+    sigS.SetBytes(tx.Signature[len(tx.Signature)/2:])
 
-    // Create the hash of the transaction details
     hasher := sha256.New()
-    hasher.Write([]byte(fmt.Sprintf("%s:%s:%f:%f", tx.Sender, tx.Receiver, tx.Amount, tx.Fee)))
+    data := fmt.Sprintf("%s:%s:%.6f:%.6f", tx.Sender, tx.Receiver, tx.Amount, tx.Fee)
+    hasher.Write([]byte(data))
     hash := hasher.Sum(nil)
 
-    // Verify the signature
-    ecdsaPublicKey := publicKey.(*ecdsa.PublicKey)
-    return ecdsa.Verify(ecdsaPublicKey, hash, sigR, sigS)
+    fmt.Printf("Data used for hash: %s\n", data)
+    fmt.Printf("Hash: %x\n", hash)
+    fmt.Printf("R: %x, S: %x\n", sigR, sigS)
+    fmt.Printf("Public Key: %+v\n", publicKey)
+
+    verified := ecdsa.Verify(publicKey, hash, sigR, sigS)
+    if !verified {
+        fmt.Println("Signature verification failed")
+    }
+    return verified
 }
 
-// This function is a placeholder and needs proper implementation based on your system
-func getPublicKey(sender string) interface{} {
-    // This should return the actual public key object associated with a sender's address
-    return &ecdsa.PublicKey{} // Placeholder return
+func blockData(block *common.Block) []byte {
+    blockInfo := fmt.Sprintf("%d%s%d", block.Timestamp, block.PrevBlockHash, block.Nonce)
+    return append([]byte(blockInfo), concatTransactions(block.Transactions)...)
+}
+
+func concatTransactions(transactions []*common.Transaction) string {
+    var result string
+    for _, tx := range transactions {
+        result += hex.EncodeToString(tx.Signature)
+    }
+    return result
+}
+
+func isHashValid(hash string, difficulty int) bool {
+    target := big.NewInt(1)
+    target.Lsh(target, uint(256-difficulty))
+
+    hexHash, _ := hex.DecodeString(hash)
+    hashInt := new(big.Int).SetBytes(hexHash)
+
+    return hashInt.Cmp(target) == -1
+}
+
+type RewardCalculator struct {
+    TotalSupply *big.Int
+}
+
+func NewRewardCalculator() *RewardCalculator {
+    return &RewardCalculator{
+        TotalSupply: big.NewInt(common.TotalSynthronSupply),
+    }
+}
+
+func (rc *RewardCalculator) CalculateReward(height int) *big.Int {
+    halvings := height / common.BlockHalvingPeriod
+    if halvings >= common.MaxHalvings {
+        return big.NewInt(0)
+    }
+    reward := big.NewInt(common.InitialReward)
+    for i := 0; i < halvings; i++ {
+        reward.Div(reward, big.NewInt(2))
+    }
+    return reward
+}
+
+type BlockRewardManager struct {
+    BlockHeight   int
+    Reward        *big.Int
+    TotalMinedSyn *big.Int
+}
+
+func NewBlockRewardManager() *BlockRewardManager {
+    return &BlockRewardManager{
+        BlockHeight:   0,
+        Reward:        big.NewInt(common.InitialReward),
+        TotalMinedSyn: big.NewInt(0),
+    }
+}
+
+func (brm *BlockRewardManager) CalculateReward() *big.Int {
+    if brm.BlockHeight%common.BlockHalvingPeriod == 0 && brm.BlockHeight != 0 {
+        brm.Reward.Div(brm.Reward, big.NewInt(2))
+    }
+
+    prospectiveTotal := new(big.Int).Add(brm.TotalMinedSyn, brm.Reward)
+    if prospectiveTotal.Cmp(big.NewInt(common.TotalSynthronSupply)) > 0 {
+        brm.Reward.Sub(brm.Reward, new(big.Int).Sub(prospectiveTotal, big.NewInt(common.TotalSynthronSupply)))
+        if brm.Reward.Cmp(big.NewInt(0)) < 0 {
+            brm.Reward.SetInt64(0)
+        }
+    }
+
+    return new(big.Int).Set(brm.Reward)
+}
+
+func (brm *BlockRewardManager) IncrementBlockHeight() {
+    brm.TotalMinedSyn.Add(brm.TotalMinedSyn, brm.Reward)
+    brm.BlockHeight++
+}
+
+type DifficultyManager struct {
+    CurrentDifficulty *big.Int
+    TargetBlockTime   time.Duration
+    LastAdjustment    time.Time
+}
+
+func NewDifficultyManager(initialDifficulty *big.Int) *DifficultyManager {
+    return &DifficultyManager{
+        CurrentDifficulty: initialDifficulty,
+        TargetBlockTime:   10 * time.Minute,
+        LastAdjustment:    time.Now(),
+    }
+}
+
+func (dm *DifficultyManager) CalculateNewDifficulty(actualTime, expectedTime time.Duration) {
+    ratio := float64(actualTime) / float64(expectedTime)
+    newDifficulty := float64(dm.CurrentDifficulty.Int64()) * ratio
+
+    dampeningFactor := 0.25
+    newDifficulty = (newDifficulty * (1 - dampeningFactor)) + (float64(dm.CurrentDifficulty.Int64()) * dampeningFactor)
+
+    if newDifficulty < 1 {
+        newDifficulty = 1
+    }
+    dm.CurrentDifficulty = big.NewInt(int64(newDifficulty))
+    dm.LastAdjustment = time.Now()
+}
+
+func (dm *DifficultyManager) AdjustDifficulty(blocks []common.Block) {
+    if len(blocks) < 2016 {
+        return
+    }
+
+    actualTime := time.Duration(blocks[len(blocks)-1].Timestamp-blocks[0].Timestamp) * time.Second
+    expectedTime := dm.TargetBlockTime * 2016
+
+    dm.CalculateNewDifficulty(actualTime, expectedTime)
+}
+
+func (dm *DifficultyManager) SimulateBlockMining() {
+    var blocks []common.Block
+    for i := 0; i < 2016; i++ {
+        block := dm.MineBlock()
+        blocks = append(blocks, block)
+    }
+    dm.AdjustDifficulty(blocks)
+}
+
+func (dm *DifficultyManager) MineBlock() common.Block {
+    nonce := 0
+    for {
+        hash := calculateHashWithNonce(nonce, dm.CurrentDifficulty)
+        if hash[:len("0000")] == "0000" {
+            break
+        }
+        nonce++
+    }
+    return common.Block{
+        Timestamp: time.Now().Unix(),
+        Nonce:     nonce,
+    }
+}
+
+func calculateHashWithNonce(nonce int, difficulty *big.Int) string {
+    data := fmt.Sprintf("%d:%s", nonce, difficulty.String())
+    hash := sha256.Sum256([]byte(data))
+    return hex.EncodeToString(hash[:])
+}
+
+type BlockchainWrapper struct {
+    *common.Blockchain
+}
+
+func CreateBlock(transactions []*common.Transaction, prevBlockHash string, config *common.MinerConfig) (*common.Block, error) {
+    block := &common.Block{
+        Timestamp:     time.Now().Unix(),
+        Transactions:  transactions,
+        PrevBlockHash: prevBlockHash,
+    }
+
+    hash, err := CalculateBlockHash(block, config)
+    if err != nil {
+        return nil, err
+    }
+    block.Hash = hash
+    return block, nil
+}
+
+func (bc *BlockchainWrapper) AddBlock(block *common.Block, config *common.MinerConfig) error {
+    if len(bc.Blocks) > 0 {
+        block.PrevBlockHash = bc.Blocks[len(bc.Blocks)-1].Hash
+    }
+
+    hash, err := CalculateBlockHash(block, config)
+    if err != nil {
+        return err
+    }
+    block.Hash = hash
+
+    if valid, err := ValidateBlock(block, bc.Difficulty, config); err != nil || !valid {
+        return errors.New("invalid proof of work")
+    }
+
+    bc.Blocks = append(bc.Blocks, block)
+    return nil
+}
+
+func (bc *BlockchainWrapper) MineBlock(transactions []*common.Transaction, config *common.MinerConfig) (*common.Block, error) {
+    var newBlock *common.Block
+    nonce := 0
+
+    for {
+        newBlock = &common.Block{
+            Timestamp:     time.Now().Unix(),
+            Transactions:  transactions,
+            PrevBlockHash: bc.Blocks[len(bc.Blocks)-1].Hash,
+            Nonce:         nonce,
+        }
+        hash, err := CalculateBlockHash(newBlock, config)
+        if err != nil {
+            return nil, err
+        }
+        newBlock.Hash = hash
+
+        if valid, err := ValidateBlock(newBlock, bc.Difficulty, config); err == nil && valid {
+            break
+        }
+
+        nonce++
+    }
+
+    if err := bc.AddBlock(newBlock, config); err != nil {
+        return nil, err
+    }
+
+    return newBlock, nil
+}
+
+func CalculateBlockHash(block *common.Block, config *common.MinerConfig) (string, error) {
+    data := block.BlockData()
+    var hash []byte
+    var err error
+
+    switch config.Algorithm {
+    case "sha256":
+        hasher := sha256.New()
+        hasher.Write(data)
+        hash = hasher.Sum(nil)
+    case "argon2":
+        hash, err = common.Argon2(data, config)
+        if err != nil {
+            return "", fmt.Errorf("error using Argon2: %v", err)
+        }
+    case "scrypt":
+        hash, err = common.Scrypt(data, config)
+        if err != nil {
+            return "", fmt.Errorf("error using Scrypt: %v", err)
+        }
+    default:
+        return "", errors.New("unsupported hashing algorithm")
+    }
+
+    return hex.EncodeToString(hash), nil
+}
+
+func ValidateBlock(block *common.Block, difficulty int, config *common.MinerConfig) (bool, error) {
+    target := common.CalculateTarget(difficulty)
+    hashInt := new(big.Int)
+    hashBytes, err := hex.DecodeString(block.Hash)
+    if err != nil {
+        return false, err
+    }
+    hashInt.SetBytes(hashBytes)
+
+    return hashInt.Cmp(target) == -1, nil
 }

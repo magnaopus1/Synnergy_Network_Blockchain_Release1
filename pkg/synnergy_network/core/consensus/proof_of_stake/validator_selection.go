@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/synthon/crypto/vrf"
+	"synnergy_network_blockchain/pkg/synnergy_network/core/cryptocurrency"
 )
 
 // Validator represents a staker in the network with their stake details.

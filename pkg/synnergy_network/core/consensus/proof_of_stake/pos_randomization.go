@@ -6,7 +6,7 @@ import (
     "crypto/rand"
     "math/big"
 
-    "github.com/synnergy-network/cryptocurrency/vrf"
+    "synnergy_network_blockchain/pkg/synnergy_network/core/cryptocurrency/vrf"
 )
 
 // VRFProvider offers functionality to generate and verify VRF proofs using ECDSA

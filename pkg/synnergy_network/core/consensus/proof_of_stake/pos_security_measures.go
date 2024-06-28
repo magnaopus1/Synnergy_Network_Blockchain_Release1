@@ -9,7 +9,7 @@ import (
     "math/big"
     "sync"
 
-    "github.com/synnergy-network/cryptography"
+    "synnergy_network_blockchain/pkg/synnergy_network/core/cryptocurrency"
 )
 
 // SecurityProvider encapsulates all security-related functionalities for the PoS mechanism

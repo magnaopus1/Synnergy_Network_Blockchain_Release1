@@ -1,106 +1,60 @@
 package synthron_coin
 
 import (
-	"errors"
+	"fmt"
 	"time"
+
+	"synnergy_network_blockchain/pkg/synnergy_network/core/transaction"
 )
 
-// Wallet struct to represent a wallet in the system
+// GenesisBlock represents the initial block in the blockchain with allocation details
+type GenesisBlock struct {
+	Timestamp       time.Time
+	InitialAllocations map[string]float64
+}
+
+// Wallet represents a simple wallet structure for holding Synthron Coins
 type Wallet struct {
 	Address string
 	Balance float64
 }
 
-// Distribution struct to hold all distribution wallets
-type Distribution struct {
-	GenesisWallet                Wallet
-	InternalDevelopmentWallet    Wallet
-	ExternalCharitableWallet     Wallet
-	InternalCharitableWallet     Wallet
-	LoanPoolWallet               Wallet
-	PassiveIncomeWallet          Wallet
-	NodeHostDistributionWallet   Wallet
-	CreatorWallet                Wallet
-}
-
-// InitialSetup struct to hold the initial setup information
-type InitialSetup struct {
-	GenesisBlockCreated bool
-	InitialGenesisBlockTimestamp time.Time
-	Distribution         Distribution
-	TotalSupply          float64
-}
-
-// NewInitialSetup initializes a new InitialSetup structure.
-func NewInitialSetup(totalSupply float64) *InitialSetup {
-	return &InitialSetup{
-		GenesisBlockCreated:         false,
-		InitialGenesisBlockTimestamp: time.Time{},
-		Distribution: Distribution{
-			GenesisWallet:                Wallet{Address: "genesis_wallet", Balance: 5000000},
-			InternalDevelopmentWallet:    Wallet{Address: "internal_dev_wallet", Balance: 0},
-			ExternalCharitableWallet:     Wallet{Address: "external_charity_wallet", Balance: 0},
-			InternalCharitableWallet:     Wallet{Address: "internal_charity_wallet", Balance: 0},
-			LoanPoolWallet:               Wallet{Address: "loan_pool_wallet", Balance: 0},
-			PassiveIncomeWallet:          Wallet{Address: "passive_income_wallet", Balance: 0},
-			NodeHostDistributionWallet:   Wallet{Address: "node_host_wallet", Balance: 0},
-			CreatorWallet:                Wallet{Address: "creator_wallet", Balance: 0},
-		},
-		TotalSupply: totalSupply,
+// initializeWallets sets up the initial wallets with predefined balances as per the genesis block.
+func initializeWallets() map[string]*Wallet {
+	return map[string]*Wallet{
+		"genesisWallet":                 {Address: "genesisAddress", Balance: 5000000},
+		"internalDevelopmentWallet":     {Address: "developmentAddress", Balance: 0},
+		"externalCharitableWallet":      {Address: "charitableExternalAddress", Balance: 0},
+		"internalCharitableWallet":      {Address: "charitableInternalAddress", Balance: 0},
+		"loanPoolWallet":                {Address: "loanPoolAddress", Balance: 0},
+		"passiveIncomeForHoldersWallet": {Address: "passiveIncomeAddress", Balance: 0},
+		"nodeHostDistributionWallet":    {Address: "nodeHostAddress", Balance: 0},
+		"creatorWallet":                 {Address: "creatorAddress", Balance: 0},
 	}
 }
 
-// CreateGenesisBlock creates the genesis block with initial distribution.
-func (is *InitialSetup) CreateGenesisBlock() error {
-	if is.GenesisBlockCreated {
-		return errors.New("genesis block already created")
+// CreateGenesisBlock creates the initial block of the blockchain with allocations.
+func CreateGenesisBlock() *GenesisBlock {
+	wallets := initializeWallets()
+
+	genesisBlock := &GenesisBlock{
+		Timestamp: time.Now(),
+		InitialAllocations: make(map[string]float64),
 	}
 
-	is.InitialGenesisBlockTimestamp = time.Now()
-	is.GenesisBlockCreated = true
+	// Allocate initial coins to the genesis wallet
+	genesisBlock.InitialAllocations[wallets["genesisWallet"].Address] = 5000000
 
-	return nil
+	fmt.Println("Genesis Block Created with Initial Allocations:", genesisBlock.InitialAllocations)
+	return genesisBlock
 }
 
-// AllocateFunds allocates funds to the respective wallets after genesis block creation.
-func (is *InitialSetup) AllocateFunds() error {
-	if !is.GenesisBlockCreated {
-		return errors.New("genesis block not created")
+// DistributeInitialCoins handles the distribution of coins from the genesis block.
+func DistributeInitialCoins(genesis *GenesisBlock, wallets map[string]*Wallet) {
+	for address, amount := range genesis.InitialAllocations {
+		if wallet, ok := wallets[address]; ok {
+			wallet.Balance += amount
+			fmt.Printf("Distributed %f Synthron Coins to %s\n", amount, address)
+		}
 	}
-
-	is.Distribution.InternalDevelopmentWallet.Balance = is.TotalSupply * 0.1
-	is.Distribution.ExternalCharitableWallet.Balance = is.TotalSupply * 0.05
-	is.Distribution.InternalCharitableWallet.Balance = is.TotalSupply * 0.05
-	is.Distribution.LoanPoolWallet.Balance = is.TotalSupply * 0.1
-	is.Distribution.PassiveIncomeWallet.Balance = is.TotalSupply * 0.1
-	is.Distribution.NodeHostDistributionWallet.Balance = is.TotalSupply * 0.1
-	is.Distribution.CreatorWallet.Balance = is.TotalSupply * 0.1
-
-	return nil
-}
-
-// CheckBalances checks the balances of all wallets.
-func (is *InitialSetup) CheckBalances() map[string]float64 {
-	balances := make(map[string]float64)
-	balances["Genesis Wallet"] = is.Distribution.GenesisWallet.Balance
-	balances["Internal Development Wallet"] = is.Distribution.InternalDevelopmentWallet.Balance
-	balances["External Charitable Wallet"] = is.Distribution.ExternalCharitableWallet.Balance
-	balances["Internal Charitable Wallet"] = is.Distribution.InternalCharitableWallet.Balance
-	balances["Loan Pool Wallet"] = is.Distribution.LoanPoolWallet.Balance
-	balances["Passive Income Wallet"] = is.Distribution.PassiveIncomeWallet.Balance
-	balances["Node Host Distribution Wallet"] = is.Distribution.NodeHostDistributionWallet.Balance
-	balances["Creator Wallet"] = is.Distribution.CreatorWallet.Balance
-
-	return balances
-}
-
-// TransferFunds transfers funds from one wallet to another
-func (is *InitialSetup) TransferFunds(fromWallet, toWallet *Wallet, amount float64) error {
-	if fromWallet.Balance < amount {
-		return errors.New("insufficient funds")
-	}
-
-	fromWallet.Balance -= amount
-	toWallet.Balance += amount
-	return nil
 }

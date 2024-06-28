@@ -1,160 +1,63 @@
 package synthron_coin
 
 import (
-	"errors"
 	"time"
 )
 
-// Validator represents a network validator
-type Validator struct {
-	Address       string
-	Stake         float64
-	RewardAddress string
-}
-
-// Network represents the blockchain network
-type Network struct {
-	Validators        map[string]*Validator
-	TotalStake        float64
-	BlockReward       float64
-	CommunityFund     float64
-	StakingRewards    float64
-	EcosystemFund     float64
-	TransactionFees   float64
-	RewardDistribution []RewardDistribution
-}
-
-// RewardDistribution represents the distribution of rewards
+// RewardDistribution handles the distribution of mining and staking rewards
 type RewardDistribution struct {
-	ValidatorAddress string
-	Amount           float64
-	Timestamp        time.Time
+	Validators map[string]float64 // Validator ID and their rewards
+	Stakers    map[string]float64 // Staker ID and their rewards
 }
 
-// NewNetwork initializes a new network
-func NewNetwork(initialReward, communityFund, ecosystemFund float64) *Network {
-	return &Network{
-		Validators:        make(map[string]*Validator),
-		BlockReward:       initialReward,
-		CommunityFund:     communityFund,
-		EcosystemFund:     ecosystemFund,
-		RewardDistribution: []RewardDistribution{},
+// StakingPool represents the staking mechanism details
+type StakingPool struct {
+	TotalStaked    float64
+	StakeRewards   map[string]float64 // Staker ID and rewards
+	StakeTimestamp map[string]time.Time // Track when stakes were made
+}
+
+// InitializeRewardDistribution sets up the reward distribution system
+func InitializeRewardDistribution() *RewardDistribution {
+	return &RewardDistribution{
+		Validators: make(map[string]float64),
+		Stakers:    make(map[string]float64),
 	}
 }
 
-// AddValidator adds a validator to the network
-func (n *Network) AddValidator(address string, stake float64, rewardAddress string) {
-	if _, exists := n.Validators[address]; !exists {
-		n.Validators[address] = &Validator{
-			Address:       address,
-			Stake:         stake,
-			RewardAddress: rewardAddress,
-		}
-		n.TotalStake += stake
+// DistributeRewards handles the distribution of rewards to validators and stakers
+func (rd *RewardDistribution) DistributeRewards(blockHeight int, transactionFees, blockReward float64) {
+	// Simplified distribution logic
+	for id := range rd.Validators {
+		rd.Validators[id] += blockReward * 0.5 / float64(len(rd.Validators)) // 50% to validators
+	}
+	for id := range rd.Stakers {
+		rd.Stakers[id] += transactionFees * 0.5 / float64(len(rd.Stakers)) // 50% to stakers from fees
 	}
 }
 
-// RemoveValidator removes a validator from the network
-func (n *Network) RemoveValidator(address string) error {
-	validator, exists := n.Validators[address]
-	if !exists {
-		return errors.New("validator does not exist")
-	}
-	n.TotalStake -= validator.Stake
-	delete(n.Validators, address)
-	return nil
-}
-
-// UpdateValidatorStake updates the stake of a validator
-func (n *Network) UpdateValidatorStake(address string, newStake float64) error {
-	validator, exists := n.Validators[address]
-	if !exists {
-		return errors.New("validator does not exist")
-	}
-	n.TotalStake = n.TotalStake - validator.Stake + newStake
-	validator.Stake = newStake
-	return nil
-}
-
-// DistributeBlockReward distributes the block reward to validators
-func (n *Network) DistributeBlockReward() {
-	for _, validator := range n.Validators {
-		reward := (validator.Stake / n.TotalStake) * n.BlockReward
-		n.RewardDistribution = append(n.RewardDistribution, RewardDistribution{
-			ValidatorAddress: validator.RewardAddress,
-			Amount:           reward,
-			Timestamp:        time.Now(),
-		})
+// InitializeStakingPool initializes the staking pool for network participants
+func InitializeStakingPool() *StakingPool {
+	return &StakingPool{
+		TotalStaked:  0,
+		StakeRewards: make(map[string]float64),
+		StakeTimestamp: make(map[string]time.Time),
 	}
 }
 
-// DistributeTransactionFees distributes transaction fees to various funds
-func (n *Network) DistributeTransactionFees() {
-	// Example allocation: 50% to staking rewards, 30% to community fund, 20% to ecosystem fund
-	stakingReward := 0.5 * n.TransactionFees
-	communityFund := 0.3 * n.TransactionFees
-	ecosystemFund := 0.2 * n.TransactionFees
-
-	n.StakingRewards += stakingReward
-	n.CommunityFund += communityFund
-	n.EcosystemFund += ecosystemFund
-	n.TransactionFees = 0 // Reset transaction fees after distribution
+// AddStake adds a stake to the staking pool
+func (sp *StakingPool) AddStake(stakerID string, amount float64) {
+	sp.TotalStaked += amount
+	sp.StakeRewards[stakerID] = 0 // Initialize rewards for this staker
+	sp.StakeTimestamp[stakerID] = time.Now()
 }
 
-// StakingRewardsCalculation calculates staking rewards for validators
-func (n *Network) StakingRewardsCalculation() {
-	for _, validator := range n.Validators {
-		reward := (validator.Stake / n.TotalStake) * n.StakingRewards
-		n.RewardDistribution = append(n.RewardDistribution, RewardDistribution{
-			ValidatorAddress: validator.RewardAddress,
-			Amount:           reward,
-			Timestamp:        time.Now(),
-		})
+// CalculateStakingRewards periodically updates rewards for all stakers based on staked amount and time
+func (sp *StakingPool) CalculateStakingRewards(currentTime time.Time) {
+	for id, stakeTime := range sp.StakeTimestamp {
+		// Simplified: Reward based on how long the coins have been staked
+		duration := currentTime.Sub(stakeTime).Hours()
+		sp.StakeRewards[id] += 0.0001 * duration // 0.01% interest per hour staked
 	}
-	n.StakingRewards = 0 // Reset staking rewards after distribution
-}
-
-// ProposeCommunityProject proposes a community project for funding
-func (n *Network) ProposeCommunityProject(projectID string, amount float64) error {
-	if amount > n.CommunityFund {
-		return errors.New("insufficient community fund")
-	}
-	n.CommunityFund -= amount
-	// Assuming community project logic is handled elsewhere
-	return nil
-}
-
-// FundEcosystemDevelopment funds ecosystem development projects
-func (n *Network) FundEcosystemDevelopment(amount float64) error {
-	if amount > n.EcosystemFund {
-		return errors.New("insufficient ecosystem fund")
-	}
-	n.EcosystemFund -= amount
-	// Assuming ecosystem development logic is handled elsewhere
-	return nil
-}
-
-// RecordTransactionFee records transaction fees collected
-func (n *Network) RecordTransactionFee(fee float64) {
-	n.TransactionFees += fee
-}
-
-// PostGenesisDistributionController controls post-genesis distribution logic
-type PostGenesisDistributionController struct {
-	Network *Network
-}
-
-// NewPostGenesisDistributionController creates a new PostGenesisDistributionController
-func NewPostGenesisDistributionController(network *Network) *PostGenesisDistributionController {
-	return &PostGenesisDistributionController{
-		Network: network,
-	}
-}
-
-// ExecuteDistribution executes the reward and fee distribution
-func (p *PostGenesisDistributionController) ExecuteDistribution() {
-	p.Network.DistributeBlockReward()
-	p.Network.DistributeTransactionFees()
-	p.Network.StakingRewardsCalculation()
 }
 

@@ -1,143 +1,116 @@
 package hybrid
 
 import (
-	"crypto/sha256"
-	"errors"
-	"fmt"
-	"math/big"
-	"time"
-
-	"github.com/synnergy_network/core/consensus/proof_of_history"
-	"github.com/synnergy_network/core/consensus/proof_of_stake"
-	"github.com/synnergy_network/core/consensus/proof_of_work"
-	"golang.org/x/crypto/argon2"
+    "math/big"
+    "crypto/sha256"
+    "crypto"
+    "time"
+    "github.com/synnergy_network/core/consensus/proof_of_work"
+    "github.com/synnergy_network/core/consensus/proof_of_stake"
+    "github.com/synnergy_network/core/consensus/proof_of_history"
 )
 
-// Constants for consensus mechanisms
-const (
-	PoW = "PoW"
-	PoS = "PoS"
-	PoH = "PoH"
-)
-
-// HybridConsensus manages the integration and transition between PoW, PoH, and PoS.
-type HybridConsensus struct {
-	PoWConsensus  *proof_of_work.Consensus
-	PoHConsensus  *proof_of_history.Consensus
-	PoSConsensus  *proof_of_stake.Consensus
-	CurrentMethod string
-	Alpha         float64
-	Beta          float64
+// ThresholdFormula calculates the threshold for switching consensus mechanisms
+func ThresholdFormula(alpha, beta, D, S float64) float64 {
+    return alpha*D + beta*S
 }
 
-// NewHybridConsensus initializes the hybrid consensus mechanism.
-func NewHybridConsensus() *HybridConsensus {
-	return &HybridConsensus{
-		PoWConsensus:  proof_of_work.NewConsensus(),
-		PoHConsensus:  proof_of_history.NewConsensus(),
-		PoSConsensus:  proof_of_stake.NewConsensus(),
-		CurrentMethod: PoW, // Default to PoW
-		Alpha:         0.5,
-		Beta:          0.5,
-	}
+// CalculateNetworkDemand calculates the network demand based on transaction throughput and block time
+func CalculateNetworkDemand(transactionsPerBlock int, averageBlockTime time.Duration) float64 {
+    return float64(transactionsPerBlock) / averageBlockTime.Seconds()
 }
 
-// TransitionConsensus transitions between consensus mechanisms based on network conditions.
-func (hc *HybridConsensus) TransitionConsensus(networkLoad int, securityThreat bool, stakeConcentration float64) {
-	threshold := hc.calculateThreshold(networkLoad, stakeConcentration)
-
-	if securityThreat || threshold > 0.7 {
-		hc.CurrentMethod = PoW
-	} else if networkLoad > 1000 {
-		hc.CurrentMethod = PoH
-	} else {
-		hc.CurrentMethod = PoS
-	}
+// CalculateStakeConcentration calculates the stake concentration
+func CalculateStakeConcentration(stakedCoins, totalCoins float64) float64 {
+    return stakedCoins / totalCoins
 }
 
-// calculateThreshold calculates the threshold for consensus switching.
-func (hc *HybridConsensus) calculateThreshold(networkLoad int, stakeConcentration float64) float64 {
-	return hc.Alpha*float64(networkLoad) + hc.Beta*stakeConcentration
+// AdjustDifficulty adjusts the difficulty of PoW based on network hash rate fluctuations
+func AdjustDifficulty(currentDifficulty int, hashRateFluctuations float64) int {
+    if hashRateFluctuations > 1 {
+        return currentDifficulty + 1
+    } else if hashRateFluctuations < 1 {
+        return currentDifficulty - 1
+    }
+    return currentDifficulty
 }
 
-// MineBlock mines a block using the current consensus method.
-func (hc *HybridConsensus) MineBlock(data string) (interface{}, error) {
-	switch hc.CurrentMethod {
-	case PoW:
-		return hc.PoWConsensus.MineBlock(data)
-	case PoH:
-		return hc.PoHConsensus.CreatePoH(data)
-	case PoS:
-		return hc.PoSConsensus.MineBlock(data)
-	default:
-		return nil, errors.New("unsupported consensus method")
-	}
+// SelectValidator selects a validator based on stake
+func SelectValidator(validators []proof_of_stake.Validator) proof_of_stake.Validator {
+    totalStake := 0.0
+    for _, validator := range validators {
+        totalStake += validator.Stake
+    }
+
+    randomPoint := totalStake * (float64(rand.Intn(100)) / 100.0)
+    runningTotal := 0.0
+    for _, validator := range validators {
+        runningTotal += validator.Stake
+        if runningTotal >= randomPoint {
+            return validator
+        }
+    }
+    return validators[0]
 }
 
-// AddBlock adds a block to the blockchain using the current consensus method.
-func (hc *HybridConsensus) AddBlock(block interface{}) error {
-	switch hc.CurrentMethod {
-	case PoW:
-		return hc.PoWConsensus.AddBlock(block.(*proof_of_work.Block))
-	case PoH:
-		return hc.PoHConsensus.AddBlock(block.(*proof_of_history.Block))
-	case PoS:
-		return hc.PoSConsensus.AddBlock(block.(*proof_of_stake.Block))
-	default:
-		return errors.New("unsupported consensus method")
-	}
+// ValidateBlock validates a block using PoS
+func ValidateBlock(blockHash string, validators []proof_of_stake.Validator) bool {
+    selectedValidator := SelectValidator(validators)
+    return proof_of_stake.ValidateBlock(selectedValidator, blockHash)
 }
 
-// ValidateBlock validates a block using the current consensus method.
-func (hc *HybridConsensus) ValidateBlock(validatorID string, block interface{}) error {
-	switch hc.CurrentMethod {
-	case PoS:
-		return hc.PoSConsensus.ValidateBlock(validatorID, block.(*proof_of_stake.Block))
-	default:
-		return errors.New("validation is only supported for PoS in this context")
-	}
+// MineBlock performs PoW mining for a new block
+func MineBlock(transactions []string, difficulty int) string {
+    nonce := 0
+    var hash [32]byte
+    var hashInt big.Int
+    target := big.NewInt(1)
+    target.Lsh(target, uint(256-difficulty))
+
+    for {
+        data := transactionsToString(transactions) + fmt.Sprintf("%d", nonce)
+        hash = sha256.Sum256([]byte(data))
+        hashInt.SetBytes(hash[:])
+
+        if hashInt.Cmp(target) == -1 {
+            return fmt.Sprintf("%x", hash)
+        } else {
+            nonce++
+        }
+    }
 }
 
-// SlashValidator slashes a validator for malicious behavior.
-func (hc *HybridConsensus) SlashValidator(validatorID string) error {
-	if hc.CurrentMethod == PoS {
-		return hc.PoSConsensus.SlashValidator(validatorID)
-	}
-	return errors.New("slashing is only supported for PoS in this context")
+// transactionsToString converts transactions to a single string
+func transactionsToString(transactions []string) string {
+    result := ""
+    for _, tx := range transactions {
+        result += tx
+    }
+    return result
 }
 
-// Argon2 mining function
-func argon2Hash(password, salt []byte) []byte {
-	return argon2.IDKey(password, salt, 1, 64*1024, 4, 32)
+// ProofOfHistory logic for PoH phase
+func ProofOfHistory(transactions []string) string {
+    var hash [32]byte
+    result := ""
+    for _, tx := range transactions {
+        hash = sha256.Sum256([]byte(tx))
+        result += hex.EncodeToString(hash[:])
+    }
+    return result
 }
 
-// Example usage of Argon2 mining in PoW phase
-func (hc *HybridConsensus) MineWithArgon2(data string) (*proof_of_work.Block, error) {
-	if hc.CurrentMethod != PoW {
-		return nil, errors.New("current method is not PoW")
-	}
+// SwitchConsensusMechanism decides the optimal consensus mechanism based on network conditions
+func SwitchConsensusMechanism(alpha, beta float64, transactionsPerBlock int, averageBlockTime time.Duration, stakedCoins, totalCoins float64) string {
+    D := CalculateNetworkDemand(transactionsPerBlock, averageBlockTime)
+    S := CalculateStakeConcentration(stakedCoins, totalCoins)
+    threshold := ThresholdFormula(alpha, beta, D, S)
 
-	prevBlock := hc.PoWConsensus.Blockchain.Blocks[len(hc.PoWConsensus.Blockchain.Blocks)-1]
-	newBlock := proof_of_work.NewBlock(data, prevBlock)
-	salt := []byte("random_salt")
-
-	for !proof_of_work.IsHashValid(fmt.Sprintf("%x", argon2Hash([]byte(newBlock.Data), salt))) {
-		newBlock.Nonce++
-		newBlock.Hash = fmt.Sprintf("%x", argon2Hash([]byte(newBlock.Data), salt))
-	}
-
-	hc.PoWConsensus.Blockchain.AddBlock(newBlock)
-	return newBlock, nil
-}
-
-// Encrypt data using AES-GCM
-func encryptData(data, key []byte) ([]byte, error) {
-	// AES-GCM encryption logic here
-	return nil, nil
-}
-
-// Decrypt data using AES-GCM
-func decryptData(ciphertext, key []byte) ([]byte, error) {
-	// AES-GCM decryption logic here
-	return nil, nil
+    if threshold > 0.75 {
+        return "PoS"
+    } else if threshold < 0.25 {
+        return "PoW"
+    } else {
+        return "PoH"
+    }
 }

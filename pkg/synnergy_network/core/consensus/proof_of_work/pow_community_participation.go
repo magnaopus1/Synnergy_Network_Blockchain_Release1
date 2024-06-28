@@ -4,13 +4,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"sync"
+
+	"synnergy_network_blockchain/pkg/synnergy_network/core/common"
 )
 
 // CommunityParticipation manages community involvement and reward distribution.
 type CommunityParticipation struct {
 	Participants map[string]*MinerProfile
-	Blockchain   *Blockchain
+	Blockchain   *common.Blockchain
 	lock         sync.Mutex
 }
 
@@ -22,13 +25,8 @@ type MinerProfile struct {
 	Participating bool
 }
 
-// Blockchain represents a simplified version of the blockchain maintained by the network.
-type Blockchain struct {
-	Blocks []*Block
-}
-
 // NewCommunityParticipation initializes the community participation handler.
-func NewCommunityParticipation(blockchain *Blockchain) *CommunityParticipation {
+func NewCommunityParticipation(blockchain *common.Blockchain) *CommunityParticipation {
 	return &CommunityParticipation{
 		Participants: make(map[string]*MinerProfile),
 		Blockchain:   blockchain,
@@ -72,7 +70,7 @@ func (cp *CommunityParticipation) UpdateMinerActivity(minerID string, participat
 }
 
 // CalculateCommunityReward distributes mining rewards among active participants based on their hash power and stake.
-func (cp *CommunityParticipation) CalculateCommunityReward(block *Block) {
+func (cp *CommunityParticipation) CalculateCommunityReward(block *common.Block) {
 	cp.lock.Lock()
 	defer cp.lock.Unlock()
 
@@ -85,38 +83,24 @@ func (cp *CommunityParticipation) CalculateCommunityReward(block *Block) {
 
 	for _, miner := range cp.Participants {
 		if miner.Participating {
-			reward := (miner.HashPower / totalPower) * block.Reward
-			cp.transferReward(miner.ID, reward)
+			reward := new(big.Float).Mul(new(big.Float).Quo(new(big.Float).SetFloat64(miner.HashPower), new(big.Float).SetFloat64(totalPower)), new(big.Float).SetInt(block.Reward))
+			rewardInt, _ := reward.Int(nil) // Convert big.Float to big.Int
+			cp.transferReward(miner.ID, rewardInt)
 		}
 	}
 }
 
 // transferReward simulates the transfer of mining rewards to the miner's wallet.
-func (cp *CommunityParticipation) transferReward(minerID string, amount float64) {
+func (cp *CommunityParticipation) transferReward(minerID string, amount *big.Int) {
 	// This function would interact with a wallet service or similar to credit the miner
 	// Example: WalletService.Credit(minerID, amount)
 }
 
 // GenerateBlock simulates block generation, typically called by a mining algorithm.
-func (cp *CommunityParticipation) GenerateBlock(transactions []*Transaction, prevHash string, reward float64) *Block {
-	return &Block{
-		PrevHash:     prevHash,
-		Transactions: transactions,
-		Reward:       reward,
+func (cp *CommunityParticipation) GenerateBlock(transactions []*common.Transaction, prevHash string, reward *big.Int) *common.Block {
+	return &common.Block{
+		PrevBlockHash: prevHash,
+		Transactions:  transactions,
+		Reward:        reward,
 	}
-}
-
-// Block represents a basic block in the blockchain.
-type Block struct {
-	PrevHash     string
-	Transactions []*Transaction
-	Reward       float64
-}
-
-// Transaction represents a simplified transaction model.
-type Transaction struct {
-	Sender    string
-	Receiver  string
-	Amount    float64
-	Fee       float64
 }

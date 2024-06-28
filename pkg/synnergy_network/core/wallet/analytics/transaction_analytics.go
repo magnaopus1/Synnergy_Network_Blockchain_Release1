@@ -1,110 +1,90 @@
 package analytics
 
 import (
-	"fmt"
+	"encoding/json"
+	"sync"
 	"time"
-
-	"github.com/synthron_blockchain_final/pkg/layer0/core/transaction/transaction_types"
-	"github.com/synthron_blockchain_final/pkg/layer0/core/wallet"
 )
 
-// TransactionAnalytics handles various analytical functionalities related to transactions.
-type TransactionAnalytics struct {
-	wallet     *wallet.Wallet
-	transactions []transaction_types.Transaction
+// Transaction represents the basic structure of a blockchain transaction.
+type Transaction struct {
+	ID        string    `json:"id"`
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	Amount    float64   `json:"amount"`
+	Fee       float64   `json:"fee"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
-// NewTransactionAnalytics creates a new instance of TransactionAnalytics.
-func NewTransactionAnalytics(wallet *wallet.Wallet) *TransactionAnalytics {
-	return &TransactionAnalytics{
-		wallet:       wallet,
-		transactions: make([]transaction_types.Transaction, 0),
+// TransactionAnalyticsService provides methods to analyze transaction data.
+type TransactionAnalyticsService struct {
+	Transactions []Transaction
+	mu           sync.Mutex
+}
+
+// NewTransactionAnalyticsService initializes a new instance of TransactionAnalyticsService.
+func NewTransactionAnalyticsService() *TransactionAnalyticsService {
+	return &TransactionAnalyticsService{
+		Transactions: make([]Transaction, 0),
 	}
 }
 
-// AddTransaction adds a transaction to the analytics tracking.
-func (ta *TransactionAnalytics) AddTransaction(tx transaction_types.Transaction) {
-	ta.transactions = append(ta.transactions, tx)
+// AddTransaction adds a new transaction to the analytics pool.
+func (tas *TransactionAnalyticsService) AddTransaction(tx Transaction) {
+	tas.mu.Lock()
+	defer tas.mu.Unlock()
+	tas.Transactions = append(tas.Transactions, tx)
 }
 
-// CalculateTransactionVolume calculates the total volume of transactions over a specified period.
-func (ta *TransactionAnalytics) CalculateTransactionVolume(start, end time.Time) float64 {
-	var totalVolume float64
-	for _, tx := range ta.transactions {
-		if tx.Timestamp.After(start) && tx.Timestamp.Before(end) {
-			totalVolume += tx.Amount
+// TransactionVolume calculates the total transaction volume within a specified time range.
+func (tas *TransactionAnalyticsService) TransactionVolume(startTime, endTime time.Time) float64 {
+	tas.mu.Lock()
+	defer tas.mu.Unlock()
+	var volume float64
+	for _, tx := range tas.Transactions {
+		if tx.Timestamp.After(startTime) && tx.Timestamp.Before(endTime) {
+			volume += tx.Amount
 		}
 	}
-	return totalVolume
+	return volume
 }
 
-// CalculateTransactionCount calculates the total number of transactions over a specified period.
-func (ta *TransactionAnalytics) CalculateTransactionCount(start, end time.Time) int {
-	count := 0
-	for _, tx := range ta.transactions {
-		if tx.Timestamp.After(start) && tx.Timestamp.Before(end) {
+// AverageTransactionFee calculates the average transaction fee within a specified time range.
+func (tas *TransactionAnalyticsService) AverageTransactionFee(startTime, endTime time.Time) float64 {
+	tas.mu.Lock()
+	defer tas.mu.Unlock()
+	var totalFee float64
+	var count float64
+	for _, tx := range tas.Transactions {
+		if tx.Timestamp.After(startTime) && tx.Timestamp.Before(endTime) {
+			totalFee += tx.Fee
 			count++
 		}
 	}
-	return count
-}
-
-// GetLargestTransaction finds the largest transaction over a specified period.
-func (ta *TransactionAnalytics) GetLargestTransaction(start, end time.Time) *transaction_types.Transaction {
-	var largestTx *transaction_types.Transaction
-	for _, tx := range ta.transactions {
-		if tx.Timestamp.After(start) && tx.Timestamp.Before(end) {
-			if largestTx == nil || tx.Amount > largestTx.Amount {
-				largestTx = &tx
-			}
-		}
-	}
-	return largestTx
-}
-
-// CalculateAverageTransactionValue calculates the average value of transactions over a specified period.
-func (ta *TransactionAnalytics) CalculateAverageTransactionValue(start, end time.Time) float64 {
-	totalVolume := ta.CalculateTransactionVolume(start, end)
-	transactionCount := ta.CalculateTransactionCount(start, end)
-	if transactionCount == 0 {
+	if count == 0 {
 		return 0
 	}
-	return totalVolume / float64(transactionCount)
+	return totalFee / count
 }
 
-// PrintTransactionReport generates and prints a report of transactions over a specified period.
-func (ta *TransactionAnalytics) PrintTransactionReport(start, end time.Time) {
-	fmt.Printf("Transaction Report from %s to %s:\n", start, end)
-	fmt.Printf("Total Volume: %f\n", ta.CalculateTransactionVolume(start, end))
-	fmt.Printf("Total Count: %d\n", ta.CalculateTransactionCount(start, end))
-	largestTx := ta.GetLargestTransaction(start, end)
-	if largestTx != nil {
-		fmt.Printf("Largest Transaction: %f at %s\n", largestTx.Amount, largestTx.Timestamp)
-	}
-	fmt.Printf("Average Transaction Value: %f\n", ta.CalculateAverageTransactionValue(start, end))
-}
-
-// IdentifyAnomalies identifies transactions that deviate significantly from the average value over a specified period.
-func (ta *TransactionAnalytics) IdentifyAnomalies(start, end time.Time, threshold float64) []transaction_types.Transaction {
-	averageValue := ta.CalculateAverageTransactionValue(start, end)
-	anomalies := make([]transaction_types.Transaction, 0)
-	for _, tx := range ta.transactions {
-		if tx.Timestamp.After(start) && tx.Timestamp.Before(end) {
-			if tx.Amount > averageValue*threshold {
-				anomalies = append(anomalies, tx)
-			}
+// DetectAnomalies searches for transactions that deviate from typical patterns.
+func (tas *TransactionAnalyticsService) DetectAnomalies() []Transaction {
+	tas.mu.Lock()
+	defer tas.mu.Unlock()
+	var anomalies []Transaction
+	// Example: Detect transactions with fees significantly higher than the average
+	averageFee := tas.AverageTransactionFee(time.Now().AddDate(0, -1, 0), time.Now())
+	for _, tx := range tas.Transactions {
+		if tx.Fee > averageFee*1.5 {
+			anomalies = append(anomalies, tx)
 		}
 	}
 	return anomalies
 }
 
-// GenerateCSVReport generates a CSV report of transactions over a specified period.
-func (ta *TransactionAnalytics) GenerateCSVReport(start, end time.Time) string {
-	csv := "Timestamp,Amount\n"
-	for _, tx := range ta.transactions {
-		if tx.Timestamp.After(start) && tx.Timestamp.Before(end) {
-			csv += fmt.Sprintf("%s,%f\n", tx.Timestamp, tx.Amount)
-		}
-	}
-	return csv
+// SerializeTransactions converts the transactions data to JSON.
+func (tas *TransactionAnalyticsService) SerializeTransactions() ([]byte, error) {
+	tas.mu.Lock()
+	defer tas.mu.Unlock()
+	return json.Marshal(tas.Transactions)
 }

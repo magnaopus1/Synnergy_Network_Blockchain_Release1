@@ -1,127 +1,109 @@
 package authentication
 
 import (
-	"context"
-	"fmt"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
-	"strings"
-	"time"
 
-	"github.com/dgrijalva/jwt-go"
-	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/scrypt"
+
+	"synnergy_network/blockchain/crypto"
+	"synnergy_network/core/wallet"
 )
 
-// AuthMiddleware handles JWT authentication for HTTP requests.
+// Constants for the middleware configuration.
+const (
+	keyLength = 32 // Length of the encryption key.
+	saltSize  = 16 // Size of the salt.
+	nonceSize = 12 // Size for the nonce in AES-GCM.
+)
+
+// MiddlewareConfig holds configuration for the AuthMiddleware.
+type MiddlewareConfig struct {
+	EncryptionKey string
+}
+
+// AuthMiddleware handles authentication and session management.
 type AuthMiddleware struct {
-	jwtKey []byte
+	config MiddlewareConfig
+	aesGCM cipher.AEAD
 }
 
-// NewAuthMiddleware creates a new instance of AuthMiddleware.
-func NewAuthMiddleware(jwtKey string) *AuthMiddleware {
-	return &AuthMiddleware{
-		jwtKey: []byte(jwtKey),
-	}
-}
-
-// GenerateJWT generates a JWT for a given user ID.
-func (am *AuthMiddleware) GenerateJWT(userID string) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"userID": userID,
-		"exp":    time.Now().Add(24 * time.Hour).Unix(),
-	})
-
-	tokenString, err := token.SignedString(am.jwtKey)
+// NewAuthMiddleware initializes and returns an AuthMiddleware with specified configuration.
+func NewAuthMiddleware(config MiddlewareConfig) (*AuthMiddleware, error) {
+	key, salt, err := generateKey(config.EncryptionKey)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return tokenString, nil
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	return &AuthMiddleware{
+		config: config,
+		aesGCM: aesGCM,
+	}, nil
 }
 
-// ParseJWT parses and validates a JWT, returning the user ID if valid.
-func (am *AuthMiddleware) ParseJWT(tokenString string) (string, error) {
-	claims := &jwt.MapClaims{}
-
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
-		return am.jwtKey, nil
-	})
-
-	if err != nil || !token.Valid {
-		return "", err
+// generateKey uses Scrypt to generate a key from the passphrase.
+func generateKey(passphrase string) ([]byte, []byte, error) {
+	salt := make([]byte, saltSize)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, nil, err
 	}
 
-	userID, ok := (*claims)["userID"].(string)
-	if !ok {
-		return "", fmt.Errorf("invalid token claims")
+	key, err := scrypt.Key([]byte(passphrase), salt, 16384, 8, 1, keyLength)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return userID, nil
+	return key, salt, nil
 }
 
-// Middleware is the actual middleware function to be used in HTTP handlers.
+// Middleware function that ensures only authenticated requests are processed.
 func (am *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Authorization header is required", http.StatusUnauthorized)
+		if !am.isAuthenticated(r) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-
-		authToken := strings.TrimPrefix(authHeader, "Bearer ")
-		userID, err := am.ParseJWT(authToken)
-		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), "userID", userID)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r)
 	})
 }
 
-// HashPassword hashes a password using Argon2.
-func HashPassword(password string, salt []byte) []byte {
-	return argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
-}
-
-// VerifyPassword verifies a password against a given hash and salt.
-func VerifyPassword(password string, hash, salt []byte) bool {
-	return string(hash) == string(argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32))
-}
-
-// Example usage of the AuthMiddleware and password hashing
-func exampleUsage() {
-	jwtKey := "your-256-bit-secret"
-	authMiddleware := NewAuthMiddleware(jwtKey)
-
-	// Generating a JWT for a user
-	userID := "123456"
-	token, err := authMiddleware.GenerateJWT(userID)
-	if err != nil {
-		fmt.Printf("Error generating JWT: %v\n", err)
-		return
+// isAuthenticated checks if the request is authenticated.
+func (am *AuthMiddleware) isAuthenticated(r *http.Request) bool {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return false
 	}
-	fmt.Printf("Generated JWT: %s\n", token)
 
-	// Parsing and validating the JWT
-	parsedUserID, err := authMiddleware.ParseJWT(token)
+	// Decrypt token logic here, assume token is encrypted using AES-GCM.
+	// This is simplified, in real use, ensure to handle errors and edge cases.
+	decodedToken, err := hex.DecodeString(token)
 	if err != nil {
-		fmt.Printf("Error parsing JWT: %v\n", err)
-		return
+		return false
 	}
-	fmt.Printf("Parsed user ID: %s\n", parsedUserID)
 
-	// Hashing a password
-	password := "supersecurepassword"
-	salt := []byte("somesalt")
-	hash := HashPassword(password, salt)
-	fmt.Printf("Password hash: %x\n", hash)
+	nonce, ciphertext := decodedToken[:nonceSize], decodedToken[nonceSize:]
+	plaintext, err := am.aesGCM.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return false
+	}
 
-	// Verifying a password
-	isValid := VerifyPassword(password, hash, salt)
-	fmt.Printf("Password is valid: %v\n", isValid)
+	// In real implementation, verify the plaintext (e.g., check it against a database or another trusted source).
+	return string(plaintext) == "authenticated"
 }
 
-func main() {
-	exampleUsage()
-}
+// Add any additional functions here to extend the middleware's capabilities, such as logging, token refresh, etc.
+

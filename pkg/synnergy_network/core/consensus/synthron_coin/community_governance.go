@@ -6,138 +6,112 @@ import (
 	"time"
 )
 
-// GovernanceProposal represents a proposal for community governance
-type GovernanceProposal struct {
-	ID           string
-	Title        string
-	Description  string
-	Proposer     string
-	VotesFor     int64
-	VotesAgainst int64
-	Deadline     int64 // Unix timestamp
-	Executed     bool
+// GovernanceModule handles all aspects of community governance for Synthron Coin.
+type GovernanceModule struct {
+	Proposals     map[int]*Proposal
+	ActiveVotes   map[int]map[string]bool
+	ProposalCount int
+	lock          sync.Mutex
 }
 
-// CommunityGovernance handles governance processes in the Synthron network
-type CommunityGovernance struct {
-	Proposals     map[string]*GovernanceProposal
-	ProposalMutex sync.Mutex
+// Proposal defines a governance proposal.
+type Proposal struct {
+	ID          int
+	Description string
+	CreatedAt   time.Time
+	EndsAt      time.Time
+	Approved    bool
+	Votes       map[string]bool // map of voter address to vote (true for yes, false for no)
+	MinimumQuorum int           // Minimum number of votes to consider the proposal valid
+	MajorityPercentage float64  // Percentage of yes votes to total votes needed to approve the proposal
 }
 
-// NewCommunityGovernance initializes a new instance of CommunityGovernance
-func NewCommunityGovernance() *CommunityGovernance {
-	return &CommunityGovernance{
-		Proposals: make(map[string]*GovernanceProposal),
+// NewGovernanceModule initializes a new instance of the governance module.
+func NewGovernanceModule() *GovernanceModule {
+	return &GovernanceModule{
+		Proposals:   make(map[int]*Proposal),
+		ActiveVotes: make(map[int]map[string]bool),
 	}
 }
 
-// CreateProposal allows a community member to create a new proposal
-func (cg *CommunityGovernance) CreateProposal(id, title, description, proposer string, deadline int64) error {
-	cg.ProposalMutex.Lock()
-	defer cg.ProposalMutex.Unlock()
+// CreateProposal allows a community member to submit a proposal.
+func (gm *GovernanceModule) CreateProposal(description string, duration time.Duration, quorum int, majority float64) int {
+	gm.lock.Lock()
+	defer gm.lock.Unlock()
 
-	if _, exists := cg.Proposals[id]; exists {
-		return errors.New("proposal with this ID already exists")
+	proposalID := gm.ProposalCount + 1
+	gm.Proposals[proposalID] = &Proposal{
+		ID:          proposalID,
+		Description: description,
+		CreatedAt:   time.Now(),
+		EndsAt:      time.Now().Add(duration),
+		Votes:       make(map[string]bool),
+		MinimumQuorum: quorum,
+		MajorityPercentage: majority,
 	}
+	gm.ProposalCount++
 
-	cg.Proposals[id] = &GovernanceProposal{
-		ID:           id,
-		Title:        title,
-		Description:  description,
-		Proposer:     proposer,
-		Deadline:     deadline,
-		VotesFor:     0,
-		VotesAgainst: 0,
-		Executed:     false,
-	}
-	return nil
+	return proposalID
 }
 
-// VoteForProposal allows a community member to vote for a proposal
-func (cg *CommunityGovernance) VoteForProposal(proposalID string) error {
-	cg.ProposalMutex.Lock()
-	defer cg.ProposalMutex.Unlock()
+// Vote allows a community member to vote on a proposal.
+func (gm *GovernanceModule) Vote(proposalID int, voter string, vote bool) error {
+	gm.lock.Lock()
+	defer gm.lock.Unlock()
 
-	proposal, exists := cg.Proposals[proposalID]
+	proposal, exists := gm.Proposals[proposalID]
 	if !exists {
 		return errors.New("proposal does not exist")
 	}
 
-	if proposal.Executed || proposal.Deadline < getTimeNow() {
-		return errors.New("voting period has ended or proposal already executed")
+	if time.Now().After(proposal.EndsAt) {
+		return errors.New("voting period has ended")
 	}
 
-	proposal.VotesFor++
+	proposal.Votes[voter] = vote
 	return nil
 }
 
-// VoteAgainstProposal allows a community member to vote against a proposal
-func (cg *CommunityGovernance) VoteAgainstProposal(proposalID string) error {
-	cg.ProposalMutex.Lock()
-	defer cg.ProposalMutex.Unlock()
+// TallyVotes finalizes the voting process for a proposal.
+func (gm *GovernanceModule) TallyVotes(proposalID int) error {
+	gm.lock.Lock()
+	defer gm.lock.Unlock()
 
-	proposal, exists := cg.Proposals[proposalID]
+	proposal, exists := gm.Proposals[proposalID]
 	if !exists {
 		return errors.New("proposal does not exist")
 	}
 
-	if proposal.Executed || proposal.Deadline < getTimeNow() {
-		return errors.New("voting period has ended or proposal already executed")
+	if !time.Now().After(proposal.EndsAt) {
+		return errors.New("voting period has not ended yet")
 	}
 
-	proposal.VotesAgainst++
-	return nil
-}
-
-// ExecuteProposal executes a proposal if the voting period has ended
-func (cg *CommunityGovernance) ExecuteProposal(proposalID string) error {
-	cg.ProposalMutex.Lock()
-	defer cg.ProposalMutex.Unlock()
-
-	proposal, exists := cg.Proposals[proposalID]
-	if !exists {
-		return errors.New("proposal does not exist")
+	totalVotes := len(proposal.Votes)
+	if totalVotes < proposal.MinimumQuorum {
+		return errors.New("not enough votes to meet quorum")
 	}
 
-	if proposal.Executed {
-		return errors.New("proposal already executed")
+	var yesVotes int
+	for _, vote := range proposal.Votes {
+		if vote {
+			yesVotes++
+		}
 	}
 
-	if proposal.Deadline >= getTimeNow() {
-		return errors.New("voting period has not ended")
-	}
-
-	// Placeholder for actual execution logic
-	proposal.Executed = true
-
-	// Execute the proposal based on the votes
-	if proposal.VotesFor > proposal.VotesAgainst {
-		cg.executeProposalActions(proposal)
+	yesPercentage := (float64(yesVotes) / float64(totalVotes)) * 100
+	if yesPercentage >= proposal.MajorityPercentage {
+		proposal.Approved = true
+	} else {
+		proposal.Approved = false
 	}
 
 	return nil
 }
 
-// GetProposalDetails retrieves the details of a proposal
-func (cg *CommunityGovernance) GetProposalDetails(proposalID string) (*GovernanceProposal, error) {
-	cg.ProposalMutex.Lock()
-	defer cg.ProposalMutex.Unlock()
-
-	proposal, exists := cg.Proposals[proposalID]
-	if !exists {
-		return nil, errors.New("proposal does not exist")
-	}
-
-	return proposal, nil
-}
-
-// executeProposalActions is a placeholder for the actual execution logic of a proposal
-func (cg *CommunityGovernance) executeProposalActions(proposal *GovernanceProposal) {
-	// Placeholder for execution logic, could involve modifying protocol parameters, fund allocation, etc.
-	// This could be an integration with other parts of the Synthron blockchain network.
-}
-
-// getTimeNow is a placeholder for the function returning the current Unix timestamp
-func getTimeNow() int64 {
-	return time.Now().Unix()
-}
+var (
+	ErrProposalNotFound       = errors.New("proposal not found")
+	ErrVotingPeriodNotEnded   = errors.New("voting period not ended yet")
+	ErrVotingPeriodEnded      = errors.New("voting period has ended")
+	ErrNotEnoughVotes         = errors.New("not enough votes cast to meet quorum")
+	ErrMajorityNotAchieved    = errors.New("majority not achieved")
+)
