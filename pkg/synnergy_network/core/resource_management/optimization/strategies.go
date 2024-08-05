@@ -1,88 +1,137 @@
 package optimization
 
 import (
-	"context"
-	"sync"
-	"time"
+    "errors"
+    "log"
+    "sync"
+    "time"
 
-	"github.com/synthron_blockchain/pkg/layer0/core/resource_management/models"
-	"github.com/synthron_blockchain/pkg/utils"
+    "github.com/synnergy_network/ml"
+    "github.com/synnergy_network/monitoring"
+    "github.com/synnergy_network/security"
 )
 
-// ResourceManager handles the dynamic allocation and optimization of resources within the blockchain.
-type ResourceManager struct {
-	sync.Mutex
-	config       models.ResourceConfig
-	resourcePool models.ResourcePool
-	quit         chan struct{}
+// ResourceStrategyManager manages resource optimization strategies for the Synnergy Network.
+type ResourceStrategyManager struct {
+    MonitoringSystem *monitoring.System
+    ModelManager     *ml.ModelManager
+    SecurityManager  *security.Manager
+    Lock             sync.RWMutex
 }
 
-// NewResourceManager initializes a new ResourceManager with given configuration.
-func NewResourceManager(config models.ResourceConfig) *ResourceManager {
-	return &ResourceManager{
-		config:       config,
-		resourcePool: models.NewResourcePool(),
-		quit:         make(chan struct{}),
-	}
+// NewResourceStrategyManager initializes a new ResourceStrategyManager.
+func NewResourceStrategyManager(monitoringSystem *monitoring.System, modelManager *ml.ModelManager, securityManager *security.Manager) *ResourceStrategyManager {
+    return &ResourceStrategyManager{
+        MonitoringSystem: monitoringSystem,
+        ModelManager:     modelManager,
+        SecurityManager:  securityManager,
+    }
 }
 
-// Start launches the resource management process, including monitoring and reallocation.
-func (rm *ResourceManager) Start(ctx context.Context) {
-	go rm.monitorAndAllocate(ctx)
+// DynamicResourceAllocation adjusts resources based on real-time data and predictive models.
+func (rsm *ResourceStrategyManager) DynamicResourceAllocation() error {
+    rsm.Lock.Lock()
+    defer rsm.Lock.Unlock()
+
+    data, err := rsm.MonitoringSystem.FetchRealTimeData()
+    if err != nil {
+        return errors.New("failed to fetch real-time data")
+    }
+
+    predictions, err := rsm.ModelManager.Predict("ResourceDemandModel", data)
+    if err != nil {
+        return errors.New("prediction error")
+    }
+
+    return rsm.adjustResources(predictions)
 }
 
-// monitorAndAllocate continuously monitors resource usage and dynamically reallocates resources to maintain efficiency.
-func (rm *ResourceManager) monitorAndAllocate(ctx context.Context) {
-	ticker := time.NewTicker(rm.config.MonitorInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			rm.reallocateResources()
-		case <-ctx.Done():
-			return
-		case <-rm.quit:
-			return
-		}
-	}
+// adjustResources reallocates resources based on predictions.
+func (rsm *ResourceStrategyManager) adjustResources(predictions map[string]float64) error {
+    for resource, predictedUsage := range predictions {
+        log.Printf("Adjusting allocation for %s to %f", resource, predictedUsage)
+        // Implement logic to adjust resources such as CPU, memory, and bandwidth
+    }
+    return nil
 }
 
-// reallocateResources handles the logic to reallocate resources based on current usage and configured strategies.
-func (rm *ResourceManager) reallocateResources() {
-	rm.Lock()
-	defer rm.Unlock()
+// OptimizeDataStructures optimizes data structures used in the network for efficiency.
+func (rsm *ResourceStrategyManager) OptimizeDataStructures() {
+    rsm.Lock.Lock()
+    defer rsm.Lock.Unlock()
 
-	usageStats := rm.fetchResourceUsage()
-	needsAdjustment := rm.analyzeUsage(usageStats)
-
-	if needsAdjustment {
-		rm.adjustResources(usageStats)
-	}
+    // Implement optimization of data structures, e.g., using efficient algorithms, data compression, etc.
+    log.Println("Optimizing data structures for efficiency")
 }
 
-// fetchResourceUsage simulates the collection of current resource usage data.
-func (rm *ResourceManager) fetchResourceUsage() models.ResourceUsage {
-	// Simulate fetching real-time resource usage
-	return models.ResourceUsage{
-		CPUUsage:    utils.RandomFloat(0.0, 100.0),
-		MemoryUsage: utils.RandomFloat(0.0, 100.0),
-	}
+// MachineLearningForecasting applies machine learning models for resource forecasting.
+func (rsm *ResourceStrategyManager) MachineLearningForecasting() error {
+    rsm.Lock.Lock()
+    defer rsm.Lock.Unlock()
+
+    historicalData, err := rsm.MonitoringSystem.FetchHistoricalData()
+    if err != nil {
+        return errors.New("failed to fetch historical data")
+    }
+
+    forecast, err := rsm.ModelManager.Predict("FutureResourceDemand", historicalData)
+    if err != nil {
+        return errors.New("forecasting error")
+    }
+
+    return rsm.applyForecast(forecast)
 }
 
-// analyzeUsage determines if the current resource usage requires adjustment.
-func (rm *ResourceManager) analyzeUsage(usage models.ResourceUsage) bool {
-	return usage.CPUUsage > rm.config.CPUThreshold || usage.MemoryUsage > rm.config.MemoryThreshold
+// applyForecast uses forecast data to plan resource allocation.
+func (rsm *ResourceStrategyManager) applyForecast(forecast map[string]float64) error {
+    for resource, demand := range forecast {
+        log.Printf("Forecasted demand for %s: %f", resource, demand)
+        // Plan resource allocation based on forecast
+    }
+    return nil
 }
 
-// adjustResources adjusts resources based on current usage.
-func (rm *ResourceManager) adjustResources(usage models.ResourceUsage) {
-	// Placeholder for complex resource adjustment logic
-	log.Printf("Adjusting resources based on usage: %+v\n", usage)
+// ImplementSecurityMeasures ensures that all optimization strategies include security protocols.
+func (rsm *ResourceStrategyManager) ImplementSecurityMeasures() error {
+    rsm.Lock.Lock()
+    defer rsm.Lock.Unlock()
+
+    // Apply encryption protocols for data protection
+    err := rsm.SecurityManager.ApplyEncryptionProtocols()
+    if err != nil {
+        return errors.New("failed to implement security measures")
+    }
+
+    log.Println("Applied security measures to resource management strategies")
+    return nil
 }
 
-// Stop halts all resource management activities.
-func (rm *ResourceManager) Stop() {
-	close(rm.quit)
+// RealTimeMonitoring continuously monitors system performance and resource usage.
+func (rsm *ResourceStrategyManager) RealTimeMonitoring(interval time.Duration) {
+    ticker := time.NewTicker(interval)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ticker.C:
+            err := rsm.DynamicResourceAllocation()
+            if err != nil {
+                log.Printf("Error in dynamic resource allocation: %v", err)
+            }
+        }
+    }
 }
 
+// GenerateReports generates comprehensive reports on resource usage and optimization.
+func (rsm *ResourceStrategyManager) GenerateReports() error {
+    rsm.Lock.Lock()
+    defer rsm.Lock.Unlock()
+
+    report, err := rsm.MonitoringSystem.GenerateResourceReport()
+    if err != nil {
+        return errors.New("failed to generate resource report")
+    }
+
+    log.Printf("Generated resource report: %s", report)
+    return nil
+}

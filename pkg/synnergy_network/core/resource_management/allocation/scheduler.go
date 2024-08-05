@@ -1,94 +1,153 @@
 package allocation
 
 import (
-	"context"
+	"errors"
+	"log"
+	"sort"
 	"sync"
 	"time"
-
-	"synthron_blockchain/pkg/core/resource_management/models"
 )
 
-// Scheduler orchestrates the allocation and management of computational resources.
-type Scheduler struct {
-	allocator *DynamicAllocator
-	tasks     chan *Task
-	wg        sync.WaitGroup
+// Resource represents a computational resource.
+type Resource struct {
+	CPU    float64
+	Memory float64
+	Bandwidth float64
+	Storage float64
 }
 
-// NewScheduler creates a new Scheduler with a reference to a DynamicAllocator.
-func NewScheduler(allocator *DynamicAllocator) *Scheduler {
+// Task represents a job or process that requires resources.
+type Task struct {
+	ID          string
+	Priority    int
+	RequiredRes Resource
+	Deadline    time.Time
+}
+
+// Node represents a network node capable of handling tasks.
+type Node struct {
+	ID        string
+	AvailableRes Resource
+	AllocatedTasks map[string]Task
+	mu        sync.Mutex
+}
+
+// Scheduler handles the allocation of tasks to nodes.
+type Scheduler struct {
+	Nodes map[string]*Node
+	mu    sync.Mutex
+}
+
+// NewScheduler creates a new Scheduler.
+func NewScheduler() *Scheduler {
 	return &Scheduler{
-		allocator: allocator,
-		tasks:     make(chan *Task, 100), // Buffer may be adjusted based on expected workload
+		Nodes: make(map[string]*Node),
 	}
 }
 
-// ScheduleTask adds a new task to the scheduler queue.
-func (s *Scheduler) ScheduleTask(task *Task) {
-	s.tasks <- task
+// AddNode adds a new node to the scheduler.
+func (s *Scheduler) AddNode(node *Node) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Nodes[node.ID] = node
 }
 
-// Run starts the scheduling process and handles resource allocation.
-func (s *Scheduler) Run(ctx context.Context) {
-	s.wg.Add(1)
-	go s.processTasks(ctx)
+// ScheduleTask assigns a task to the most suitable node based on availability and priority.
+func (s *Scheduler) ScheduleTask(task Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Find nodes that can accommodate the task's resource requirements
+	var candidateNodes []*Node
+	for _, node := range s.Nodes {
+		if s.canAccommodate(node, task.RequiredRes) {
+			candidateNodes = append(candidateNodes, node)
+		}
+	}
+
+	if len(candidateNodes) == 0 {
+		return errors.New("no suitable nodes available")
+	}
+
+	// Sort nodes by available resources and task priority
+	sort.Slice(candidateNodes, func(i, j int) bool {
+		return s.availableResources(candidateNodes[i]) > s.availableResources(candidateNodes[j])
+	})
+
+	// Assign the task to the most suitable node
+	node := candidateNodes[0]
+	node.mu.Lock()
+	defer node.mu.Unlock()
+
+	node.AllocatedTasks[task.ID] = task
+	node.AvailableRes.CPU -= task.RequiredRes.CPU
+	node.AvailableRes.Memory -= task.RequiredRes.Memory
+	node.AvailableRes.Bandwidth -= task.RequiredRes.Bandwidth
+	node.AvailableRes.Storage -= task.RequiredRes.Storage
+
+	log.Printf("Task %s scheduled on node %s", task.ID, node.ID)
+	return nil
 }
 
-// processTasks continuously processes the task queue and allocates resources.
-func (s *Scheduler) processTasks(ctx context.Context) {
-	defer s.wg.Done()
+// canAccommodate checks if a node has enough available resources for a task.
+func (s *Scheduler) canAccommodate(node *Node, res Resource) bool {
+	node.mu.Lock()
+	defer node.mu.Unlock()
+
+	return node.AvailableRes.CPU >= res.CPU &&
+		node.AvailableRes.Memory >= res.Memory &&
+		node.AvailableRes.Bandwidth >= res.Bandwidth &&
+		node.AvailableRes.Storage >= res.Storage
+}
+
+// availableResources calculates the total available resources of a node.
+func (s *Scheduler) availableResources(node *Node) float64 {
+	node.mu.Lock()
+	defer node.mu.Unlock()
+
+	return node.AvailableRes.CPU + node.AvailableRes.Memory + node.AvailableRes.Bandwidth + node.AvailableRes.Storage
+}
+
+// MonitorAndReallocate continuously monitors node statuses and reallocates tasks if necessary.
+func (s *Scheduler) MonitorAndReallocate() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case task := <-s.tasks:
-			go s.handleTask(ctx, task)
-		case <-ctx.Done():
-			return // Context cancellation or deadline exceeded
+		case <-ticker.C:
+			s.reallocateTasks()
 		}
 	}
 }
 
-// handleTask manages the allocation of resources for a single task.
-func (s *Scheduler) handleTask(ctx context.Context, task *Task) {
-	// Simulate resource allocation
-	allocated, err := s.allocator.Allocate(ctx, task.RequiredResources)
-	if err != nil {
-		task.Callback(false, err)
-		return
+// reallocateTasks redistributes tasks from overloaded nodes.
+func (s *Scheduler) reallocateTasks() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, node := range s.Nodes {
+		if s.isOverloaded(node) {
+			for _, task := range node.AllocatedTasks {
+				// Try to find a better node for this task
+				if err := s.ScheduleTask(task); err == nil {
+					node.mu.Lock()
+					delete(node.AllocatedTasks, task.ID)
+					node.mu.Unlock()
+				}
+			}
+		}
 	}
-
-	// Execute the task if resources are successfully allocated
-	go func() {
-		defer s.allocator.Release(allocated) // Ensure resources are released after task completion
-		task.Execute()
-		task.Callback(true, nil)
-	}()
 }
 
-// Wait blocks until all tasks have been processed.
-func (s *Scheduler) Wait() {
-	s.wg.Wait()
-}
+// isOverloaded checks if a node is overloaded.
+func (s *Scheduler) isOverloaded(node *Node) bool {
+	node.mu.Lock()
+	defer node.mu.Unlock()
 
-// Task defines a unit of work that requires resources from the blockchain.
-type Task struct {
-	RequiredResources models.Resources
-	Execute           func()
-	Callback          func(success bool, err error)
+	const threshold = 0.8
+	return node.AvailableRes.CPU < threshold ||
+		node.AvailableRes.Memory < threshold ||
+		node.AvailableRes.Bandwidth < threshold ||
+		node.AvailableRes.Storage < threshold
 }
-
-// DynamicAllocator handles the dynamic allocation and release of blockchain resources.
-type DynamicAllocator struct {
-	// Implement allocation logic
-}
-
-// Allocate assigns resources based on the scheduler's rules and the task's needs.
-func (da *DynamicAllocator) Allocate(ctx context.Context, resources models.Resources) (models.Resources, error) {
-	// Implement allocation logic
-	return models.Resources{}, nil
-}
-
-// Release returns resources back to the pool.
-func (da *DynamicAllocator) Release(resources models.Resources) {
-	// Implement release logic
-}
-

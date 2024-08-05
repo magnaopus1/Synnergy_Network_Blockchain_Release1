@@ -1,85 +1,124 @@
 package syn722
 
 import (
-	"encoding/json"
-	"log"
 	"time"
+	"sync"
 )
 
-// TokenEvent defines the structure for events related to token actions.
-type TokenEvent struct {
-	Type      string            // Type of event (Create, Transfer, ModeChange)
-	Timestamp time.Time         // Time at which the event occurred
-	Details   map[string]string // Details about the event
+// EventType represents different types of events
+type EventType int
+
+const (
+	EventTypeTokenCreated EventType = iota
+	EventTypeTokenTransferred
+	EventTypeTokenBurned
+	EventTypeTokenModeChanged
+	EventTypeMetadataUpdated
+)
+
+// Event represents a blockchain event
+type Event struct {
+	ID        string
+	Type      EventType
+	Timestamp time.Time
+	Data      map[string]interface{}
 }
 
-// EventLogger manages the logging of token events.
-type EventLogger struct {
-	Events []TokenEvent
+// EventManager manages blockchain events
+type EventManager struct {
+	mu       sync.RWMutex
+	events   []Event
+	listeners map[EventType][]chan Event
 }
 
-// NewEventLogger initializes a new event logger.
-func NewEventLogger() *EventLogger {
-	return &EventLogger{}
+// NewEventManager creates a new EventManager
+func NewEventManager() *EventManager {
+	return &EventManager{
+		events:    make([]Event, 0),
+		listeners: make(map[EventType][]chan Event),
+	}
 }
 
-// LogEvent logs a new token-related event.
-func (el *EventLogger) LogEvent(eventType string, details map[string]string) {
-	event := TokenEvent{
+// AddEvent adds a new event
+func (em *EventManager) AddEvent(eventType EventType, data map[string]interface{}) string {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	event := Event{
+		ID:        generateEventID(),
 		Type:      eventType,
 		Timestamp: time.Now(),
-		Details:   details,
+		Data:      data,
 	}
-	el.Events = append(el.Events, event)
-	log.Printf("Logged new event: %s at %s with details %v", eventType, event.Timestamp, details)
+
+	em.events = append(em.events, event)
+	em.notifyListeners(event)
+
+	return event.ID
 }
 
-// CreateTokenEvent logs the creation of a token.
-func (el *EventLogger) CreateTokenEvent(tokenID, owner string) {
-	details := map[string]string{
-		"tokenID": tokenID,
-		"owner":   owner,
-	}
-	el.LogEvent("Create", details)
+// GetEvents returns all events
+func (em *EventManager) GetEvents() []Event {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+
+	return em.events
 }
 
-// TransferTokenEvent logs the transfer of ownership of a token.
-func (el *EventLogger) TransferTokenEvent(tokenID, fromOwner, toOwner string) {
-	details := map[string]string{
-		"tokenID":  tokenID,
-		"from":     fromOwner,
-		"to":       toOwner,
+// GetEventsByType returns events of a specific type
+func (em *EventManager) GetEventsByType(eventType EventType) []Event {
+	em.mu.RLock()
+	defer em.mu.RUnlock()
+
+	events := make([]Event, 0)
+	for _, event := range em.events {
+		if event.Type == eventType {
+			events = append(events, event)
+		}
 	}
-	el.LogEvent("Transfer", details)
+
+	return events
 }
 
-// ChangeModeEvent logs the change of mode of a token.
-func (el *EventLogger) ChangeModeEvent(tokenID string, mode Mode) {
-	details := map[string]string{
-		"tokenID": tokenID,
-		"newMode": mode.String(),
+// AddListener adds a listener for a specific event type
+func (em *EventManager) AddListener(eventType EventType, listener chan Event) {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	if _, exists := em.listeners[eventType]; !exists {
+		em.listeners[eventType] = make([]chan Event, 0)
 	}
-	el.LogEvent("ModeChange", details)
+
+	em.listeners[eventType] = append(em.listeners[eventType], listener)
 }
 
-// GetEvents returns a JSON representation of all logged events.
-func (el *EventLogger) GetEvents() ([]byte, error) {
-	data, err := json.Marshal(el.Events)
-	if err != nil {
-		log.Printf("Error marshalling events: %v", err)
-		return nil, err
+// RemoveListener removes a listener for a specific event type
+func (em *EventManager) RemoveListener(eventType EventType, listener chan Event) {
+	em.mu.Lock()
+	defer em.mu.Unlock()
+
+	if listeners, exists := em.listeners[eventType]; exists {
+		for i, l := range listeners {
+			if l == listener {
+				em.listeners[eventType] = append(listeners[:i], listeners[i+1:]...)
+				break
+			}
+		}
 	}
-	return data, nil
 }
 
-// ModeToString converts a Mode type to a string for logging purposes.
-func (m Mode) String() string {
-	switch m {
-	case Fungible:
-		return "Fungible"
-	case NonFungible:
-		return "NonFungible"
-	default:
-		return "Unknown"
+// notifyListeners notifies all listeners about an event
+func (em *EventManager) notifyListeners(event Event) {
+	if listeners, exists := em.listeners[event.Type]; exists {
+		for _, listener := range listeners {
+			go func(l chan Event) {
+				l <- event
+			}(listener)
+		}
 	}
+}
+
+// generateEventID generates a unique event ID
+func generateEventID() string {
+	return "event-" + time.Now().Format("20060102150405.000")
 }

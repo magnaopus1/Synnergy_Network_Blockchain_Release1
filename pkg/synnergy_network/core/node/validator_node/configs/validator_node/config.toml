@@ -1,0 +1,49 @@
+# Node Configuration for Validator Node
+
+[node]
+id = "unique-node-id"  # Unique identifier for this validator node
+data_replication_type = "full_replication"  # Data replication type: light, partial, full, comprehensive
+
+# Network Configuration
+[network]
+host = "0.0.0.0"  # Host IP address to bind the node
+port = 30303  # Port number for the node's network communication
+
+# Consensus Configuration
+[consensus]
+consensus_switch = 'on' #turns consensus on or off 
+deactivated_consensus1 = "-"  # Put none if none or POW, POH, POS
+deactivated_consensus2 = "-"  # Put none if none or POW, POH, POS
+staking_active = "yes"
+stake_amount = 1000  # Amount of Synnergy tokens staked as collateral (0 if inactive)
+
+# Storage Configuration
+[storage]
+data_dir = "/var/synnergy/validator_node/data"  # Directory for storing blockchain data
+log_dir = "/var/synnergy/validator_node/logs"  # Directory for storing log files
+backup_dir = "/var/synnergy/validator_node/backup"  # Directory for storing backup files
+
+# Monitoring and Metrics
+[metrics]
+enabled = true  # Enable metrics collection and reporting
+metrics_server = "http://localhost:9090"  # URL of the metrics server
+log_level = "info"  # Logging level (debug, info, warn, error)
+
+# Governance and Voting
+[governance]
+proposal_endpoint = "http://localhost:8080/proposals"  # Endpoint for submitting governance proposals
+voting_endpoint = "http://localhost:8080/vote"  # Endpoint for casting votes on proposals
+
+# Backup and Data Integrity
+[backup]
+backup_schedule = "daily"  # Backup schedule (daily, weekly, monthly)
+backup_retention_days = 30  # Number of days to retain backup files
+
+# Operational Guidelines
+[operations]
+health_check_interval = "5m"  # Interval for performing health checks
+auto_update = true  # Enable automatic updates for node software
+
+# Incentives and Rewards
+[incentives]
+reward_address = "0xYourWalletAddress"  # Wallet address to receive rewards

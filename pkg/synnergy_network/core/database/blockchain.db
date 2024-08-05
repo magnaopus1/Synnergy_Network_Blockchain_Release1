@@ -1,0 +1,119 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"os"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+const dbFile = "/Users/admin/Desktop/synnergy_network_blockchain/cmd/database/blockchain.db"
+
+// createTablesSQL contains the SQL statements to create the necessary tables.
+const createTablesSQL = `
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wallets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    address TEXT NOT NULL UNIQUE,
+    balance REAL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet_id INTEGER NOT NULL,
+    amount REAL NOT NULL,
+    type TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+);
+
+CREATE TABLE IF NOT EXISTS compliance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet_id INTEGER NOT NULL,
+    kyc_status TEXT,
+    aml_status TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+);
+
+CREATE TABLE IF NOT EXISTS activities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    activity_type TEXT,
+    details TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS backups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet_id INTEGER NOT NULL,
+    backup_data BLOB,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    email_notifications BOOLEAN DEFAULT 0,
+    push_notifications BOOLEAN DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS recovery_options (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet_id INTEGER NOT NULL,
+    option_type TEXT,
+    details TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+);
+`
+
+smart contracts
+
+legal contracts
+
+virtual machine
+
+func initDB() {
+	// Remove the existing database file
+	if _, err := os.Stat(dbFile); err == nil {
+		err := os.Remove(dbFile)
+		if err != nil {
+			log.Fatalf("Failed to remove existing database file: %v", err)
+		}
+	}
+
+	// Create a new SQLite database file
+	db, err := sql.Open("sqlite3", dbFile)
+	if err != nil {
+		log.Fatalf("Failed to create database file: %v", err)
+	}
+	defer db.Close()
+
+	// Execute the SQL statements to create tables
+	_, err = db.Exec(createTablesSQL)
+	if err != nil {
+		log.Fatalf("Failed to create tables: %v", err)
+	}
+
+	fmt.Println("Database initialized successfully")
+}
+
+func main() {
+	initDB()
+}

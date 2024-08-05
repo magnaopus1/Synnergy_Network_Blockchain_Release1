@@ -1,98 +1,83 @@
 #!/bin/bash
 
-# Synthron Blockchain Validator Node Health Check Script
+# health_check.sh - Script for performing health checks on the Synnergy Network Validator Node
 
-# Function to check CPU usage
+# Variables
+NODE_DIR="/var/synnergy/validator_node"
+LOG_DIR="${NODE_DIR}/logs"
+HEALTH_LOG="${LOG_DIR}/health_check.log"
+CPU_THRESHOLD=85
+MEMORY_THRESHOLD=90
+DISK_THRESHOLD=80
+
+# Functions
+
+log_message() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${HEALTH_LOG}"
+}
+
 check_cpu_usage() {
-    echo "Checking CPU usage..."
-    cpu_usage=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}')
-    echo "Current CPU usage: $cpu_usage%"
-    if (( $(echo "$cpu_usage > 85" | bc -l) )); then
-        echo "Warning: CPU usage is above 85%."
-    fi
+  local cpu_usage
+  cpu_usage=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}')
+  log_message "CPU Usage: ${cpu_usage}%"
+  if (( $(echo "${cpu_usage} > ${CPU_THRESHOLD}" | bc -l) )); then
+    log_message "Warning: CPU usage exceeds ${CPU_THRESHOLD}%"
+  fi
 }
 
-# Function to check memory usage
 check_memory_usage() {
-    echo "Checking memory usage..."
-    mem_usage=$(free -m | awk 'NR==2{printf "%.2f", $3*100/$2 }')
-    echo "Current memory usage: $mem_usage%"
-    if (( $(echo "$mem_usage > 85" | bc -l) )); then
-        echo "Warning: Memory usage is above 85%."
-    fi
+  local memory_usage
+  memory_usage=$(free | grep Mem | awk '{print $3/$2 * 100.0}')
+  log_message "Memory Usage: ${memory_usage}%"
+  if (( $(echo "${memory_usage} > ${MEMORY_THRESHOLD}" | bc -l) )); then
+    log_message "Warning: Memory usage exceeds ${MEMORY_THRESHOLD}%"
+  fi
 }
 
-# Function to check disk usage
 check_disk_usage() {
-    echo "Checking disk usage..."
-    disk_usage=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//g')
-    echo "Current disk usage: $disk_usage%"
-    if [ "$disk_usage" -gt 85 ]; then
-        echo "Warning: Disk usage is above 85%."
-    fi
+  local disk_usage
+  disk_usage=$(df -h | grep -E '^/dev/root' | awk '{ print $5 }' | sed 's/%//g')
+  log_message "Disk Usage: ${disk_usage}%"
+  if ((disk_usage > DISK_THRESHOLD)); then
+    log_message "Warning: Disk usage exceeds ${DISK_THRESHOLD}%"
+  fi
 }
 
-# Function to check network connectivity
-check_network_connectivity() {
-    echo "Checking network connectivity..."
-    ping -c 4 8.8.8.8 > /dev/null 2>&1
-    if [ $? -ne 0 ]; then
-        echo "Error: Network connectivity is down."
-    else
-        echo "Network connectivity is up."
-    fi
+check_network_latency() {
+  local latency
+  latency=$(ping -c 4 google.com | tail -1 | awk -F '/' '{print $5}')
+  log_message "Network Latency: ${latency} ms"
 }
 
-# Function to check node synchronization status
-check_node_sync_status() {
-    echo "Checking node synchronization status..."
-    sync_status=$(curl -s http://localhost:26657/status | jq -r .result.sync_info.catching_up)
-    if [ "$sync_status" == "false" ]; then
-        echo "Node is synchronized with the network."
-    else
-        echo "Node is catching up with the network. Please wait..."
-    fi
+check_transactions_validated() {
+  local transactions_validated
+  transactions_validated=$(grep -c 'Transaction Validated' ${LOG_DIR}/validator_node.log)
+  log_message "Transactions Validated: ${transactions_validated}"
 }
 
-# Function to check validator status
-check_validator_status() {
-    echo "Checking validator status..."
-    validator_address=$(jq -r .address < ~/.synthron/config/priv_validator_key.json)
-    validator_info=$(curl -s http://localhost:26657/validators | jq --arg addr "$validator_address" '.result.validators[] | select(.address == $addr)')
-    if [ -z "$validator_info" ]; then
-        echo "Error: Validator is not in the active set."
-    else
-        echo "Validator is active in the network."
-    fi
+check_blocks_created() {
+  local blocks_created
+  blocks_created=$(grep -c 'Block Created' ${LOG_DIR}/validator_node.log)
+  log_message "Blocks Created: ${blocks_created}"
 }
 
-# Function to check for latest software updates
-check_for_updates() {
-    echo "Checking for software updates..."
-    # Assuming the use of a package manager like apt-get for updates
-    sudo apt-get update > /dev/null 2>&1
-    updates=$(sudo apt-get -s upgrade | grep -P '^\d+ upgraded')
-    if [ -n "$updates" ]; then
-        echo "Warning: There are pending software updates."
-    else
-        echo "All software packages are up to date."
-    fi
+check_system_health() {
+  log_message "Starting system health check..."
+  check_cpu_usage
+  check_memory_usage
+  check_disk_usage
+  check_network_latency
+  check_transactions_validated
+  check_blocks_created
+  log_message "System health check completed."
 }
 
-# Function to perform a full health check
-perform_health_check() {
-    echo "Performing full health check for Synthron Validator Node..."
+# Main Script Execution
 
-    check_cpu_usage
-    check_memory_usage
-    check_disk_usage
-    check_network_connectivity
-    check_node_sync_status
-    check_validator_status
-    check_for_updates
+# Ensure the log directory exists
+mkdir -p ${LOG_DIR}
 
-    echo "Health check completed."
-}
+# Perform health checks
+check_system_health
 
-# Run the health check
-perform_health_check
+echo "Health check completed. Check the log file at ${HEALTH_LOG} for details."

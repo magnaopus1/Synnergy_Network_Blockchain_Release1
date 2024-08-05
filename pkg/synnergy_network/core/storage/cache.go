@@ -1,101 +1,165 @@
 package storage
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"sync"
-	"time"
-
-	"synthron_blockchain/pkg/layer0/core/chain"
-	"synthron_blockchain/pkg/layer0/core/crypto"
+    "crypto/sha256"
+    "encoding/hex"
+    "sync"
+    "time"
+    "github.com/patrickmn/go-cache"
+    "golang.org/x/crypto/scrypt"
+    "crypto/aes"
+    "crypto/cipher"
+    "crypto/rand"
+    "io"
+    "errors"
 )
 
-// Cache implements a thread-safe in-memory cache for storing blockchain data.
+// Cache is the main structure for our caching mechanism
 type Cache struct {
-	mu       sync.RWMutex
-	data     map[string]string // stores data hashes to values
-	ttl      map[string]time.Time // stores expiration time for cache items
-	lifetime time.Duration
+    memoryCache *cache.Cache
+    lock        sync.RWMutex
+    encryptionKey []byte
 }
 
-// NewCache initializes a new Cache with a default lifetime for items.
-func NewCache(defaultLifetime time.Duration) *Cache {
-	return &Cache{
-		data:     make(map[string]string),
-		ttl:      make(map[string]time.Time),
-		lifetime: defaultLifetime,
-	}
+// NewCache creates a new instance of Cache
+func NewCache(defaultExpiration, cleanupInterval time.Duration, encryptionKey string) *Cache {
+    return &Cache{
+        memoryCache: cache.New(defaultExpiration, cleanupInterval),
+        encryptionKey: []byte(encryptionKey),
+    }
 }
 
-// Set stores data in the cache with an associated hash key.
-func (c *Cache) Set(key string, value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// Set adds an item to the cache, with optional encryption
+func (c *Cache) Set(key string, value interface{}, encrypted bool) error {
+    c.lock.Lock()
+    defer c.lock.Unlock()
 
-	c.data[key] = value
-	c.ttl[key] = time.Now().Add(c.lifetime)
+    if encrypted {
+        encryptedValue, err := c.encryptValue(value)
+        if err != nil {
+            return err
+        }
+        c.memoryCache.Set(key, encryptedValue, cache.DefaultExpiration)
+    } else {
+        c.memoryCache.Set(key, value, cache.DefaultExpiration)
+    }
+
+    return nil
 }
 
-// Get retrieves data from the cache using a hash key.
-func (c *Cache) Get(key string) (string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+// Get retrieves an item from the cache, decrypting if necessary
+func (c *Cache) Get(key string, encrypted bool) (interface{}, bool, error) {
+    c.lock.RLock()
+    defer c.lock.RUnlock()
 
-	if data, found := c.data[key]; found {
-		if time.Now().Before(c.ttl[key]) {
-			return data, true
-		}
-	}
-	return "", false
+    cachedValue, found := c.memoryCache.Get(key)
+    if !found {
+        return nil, false, nil
+    }
+
+    if encrypted {
+        decryptedValue, err := c.decryptValue(cachedValue)
+        if err != nil {
+            return nil, false, err
+        }
+        return decryptedValue, true, nil
+    }
+
+    return cachedValue, true, nil
 }
 
-// Purge checks and removes expired items from the cache.
-func (c *Cache) Purge() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	now := time.Now()
-	for key, expiry := range c.ttl {
-		if now.After(expiry) {
-			delete(c.data, key)
-			delete(c.ttl, key)
-		}
-	}
+// Delete removes an item from the cache
+func (c *Cache) Delete(key string) {
+    c.lock.Lock()
+    defer c.lock.Unlock()
+    c.memoryCache.Delete(key)
 }
 
-// HashData generates a SHA-256 hash for given data and uses it as a key in the cache.
-func (c *Cache) HashData(data []byte) string {
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+// encryptValue encrypts the value before caching
+func (c *Cache) encryptValue(value interface{}) ([]byte, error) {
+    serializedValue, err := serialize(value)
+    if err != nil {
+        return nil, err
+    }
+
+    block, err := aes.NewCipher(c.encryptionKey)
+    if err != nil {
+        return nil, err
+    }
+
+    gcm, err := cipher.NewGCM(block)
+    if err != nil {
+        return nil, err
+    }
+
+    nonce := make([]byte, gcm.NonceSize())
+    if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+        return nil, err
+    }
+
+    ciphertext := gcm.Seal(nonce, nonce, serializedValue, nil)
+    return ciphertext, nil
 }
 
-// VerifyData ensures the integrity of data retrieved from cache by comparing with its hash key.
-func (c *Cache) VerifyData(data string, hashKey string) bool {
-	expectedHash := c.HashData([]byte(data))
-	return hashKey == expectedHash
+// decryptValue decrypts the cached value
+func (c *Cache) decryptValue(data interface{}) (interface{}, error) {
+    ciphertext, ok := data.([]byte)
+    if !ok {
+        return nil, errors.New("invalid data format")
+    }
+
+    block, err := aes.NewCipher(c.encryptionKey)
+    if err != nil {
+        return nil, err
+    }
+
+    gcm, err := cipher.NewGCM(block)
+    if err != nil {
+        return nil, err
+    }
+
+    nonceSize := gcm.NonceSize()
+    if len(ciphertext) < nonceSize {
+        return nil, errors.New("ciphertext too short")
+    }
+
+    nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+    plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+    if err != nil {
+        return nil, err
+    }
+
+    return deserialize(plaintext)
 }
 
-// SecureSet uses encryption to store data securely in the cache.
-func (c *Cache) SecureSet(key string, value string, secretKey []byte) error {
-	encryptedValue, err := crypto.EncryptAES(value, secretKey)
-	if err != nil {
-		return err
-	}
-	c.Set(key, encryptedValue)
-	return nil
+// serialize serializes the value for storage
+func serialize(value interface{}) ([]byte, error) {
+    // Implement serialization logic
+    // This is just a placeholder
+    return json.Marshal(value)
 }
 
-// SecureGet decrypts data retrieved from the cache.
-func (c *Cache) SecureGet(key string, secretKey []byte) (string, bool, error) {
-	encryptedValue, found := c.Get(key)
-	if !found {
-		return "", false, nil
-	}
+// deserialize deserializes the value after retrieval
+func deserialize(data []byte) (interface{}, error) {
+    // Implement deserialization logic
+    // This is just a placeholder
+    var value interface{}
+    err := json.Unmarshal(data, &value)
+    return value, err
+}
 
-	decryptedValue, err := crypto.DecryptAES(encryptedValue, secretKey)
-	if err != nil {
-		return "", false, err
-	}
+// HashKey hashes the key to ensure consistent length and format
+func HashKey(key string) string {
+    hash := sha256.New()
+    hash.Write([]byte(key))
+    return hex.EncodeToString(hash.Sum(nil))
+}
 
-	return decryptedValue, true, nil
+// PasswordHashing hashes a password using scrypt
+func PasswordHashing(password, salt string) (string, error) {
+    hashedPassword, err := scrypt.Key([]byte(password), []byte(salt), 32768, 8, 1, 32)
+    if err != nil {
+        return "", err
+    }
+    return hex.EncodeToString(hashedPassword), nil
 }

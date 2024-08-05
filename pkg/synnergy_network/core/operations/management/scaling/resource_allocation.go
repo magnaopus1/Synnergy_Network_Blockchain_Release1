@@ -1,230 +1,167 @@
 package scaling
 
 import (
-	"context"
+	"errors"
 	"log"
+	"math/rand"
 	"sync"
 	"time"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/autoscaling"
-	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/pkg/errors"
-	"cloud.google.com/go/compute/metadata"
-	"google.golang.org/api/compute/v1"
+
+	"github.com/synnergy_network/utils"
 )
 
-// ResourceAllocator manages resource allocation for blockchain nodes
+// ResourceAllocator handles the dynamic allocation of resources in the blockchain network.
 type ResourceAllocator struct {
-	minNodes        int
-	maxNodes        int
-	cpuThreshold    float64
-	memThreshold    float64
-	allocationInterval time.Duration
-	awsSession      *session.Session
-	googleClient    *compute.Service
-	nodes           []string
-	mutex           sync.Mutex
+	mu           sync.Mutex
+	resourcePool map[string]*Resource
 }
 
-// NewResourceAllocator initializes a new ResourceAllocator instance
-func NewResourceAllocator(minNodes, maxNodes int, cpuThreshold, memThreshold float64, allocationInterval time.Duration) (*ResourceAllocator, error) {
-	awsSess, err := session.NewSession(&aws.Config{
-		Region: aws.String("us-west-2")},
-	)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create AWS session")
-	}
+// Resource represents a computing resource in the network.
+type Resource struct {
+	ID           string
+	CPU          int
+	Memory       int
+	Allocated    bool
+	LastUsed     time.Time
+}
 
-	googleClient, err := compute.NewService(context.Background())
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create Google compute client")
-	}
-
+// NewResourceAllocator initializes a new ResourceAllocator.
+func NewResourceAllocator() *ResourceAllocator {
 	return &ResourceAllocator{
-		minNodes:        minNodes,
-		maxNodes:        maxNodes,
-		cpuThreshold:    cpuThreshold,
-		memThreshold:    memThreshold,
-		allocationInterval: allocationInterval,
-		awsSession:      awsSess,
-		googleClient:    googleClient,
-	}, nil
+		resourcePool: make(map[string]*Resource),
+	}
 }
 
-// MonitorAndAllocate monitors the network and allocates resources based on predefined thresholds
-func (r *ResourceAllocator) MonitorAndAllocate(ctx context.Context) {
-	ticker := time.NewTicker(r.allocationInterval)
-	defer ticker.Stop()
+// AddResource adds a new resource to the pool.
+func (ra *ResourceAllocator) AddResource(cpu, memory int) string {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			r.allocateResources()
+	id := generateResourceID()
+	resource := &Resource{
+		ID:        id,
+		CPU:       cpu,
+		Memory:    memory,
+		Allocated: false,
+		LastUsed:  time.Now(),
+	}
+	ra.resourcePool[id] = resource
+	log.Printf("Resource %s added with %d CPU and %d Memory", id, cpu, memory)
+	return id
+}
+
+// AllocateResource allocates a resource based on required CPU and Memory.
+func (ra *ResourceAllocator) AllocateResource(cpu, memory int) (*Resource, error) {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+
+	for _, resource := range ra.resourcePool {
+		if !resource.Allocated && resource.CPU >= cpu && resource.Memory >= memory {
+			resource.Allocated = true
+			resource.LastUsed = time.Now()
+			log.Printf("Resource %s allocated with %d CPU and %d Memory", resource.ID, cpu, memory)
+			return resource, nil
 		}
 	}
+	return nil, errors.New("no available resources matching the requirements")
 }
 
-// allocateResources adjusts the number of active nodes based on CPU and memory usage
-func (r *ResourceAllocator) allocateResources() {
-	cpuUsage, memUsage, err := r.collectMetrics()
-	if err != nil {
-		log.Println("Error collecting metrics: ", err)
-		return
+// ReleaseResource releases an allocated resource back to the pool.
+func (ra *ResourceAllocator) ReleaseResource(id string) error {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+
+	resource, exists := ra.resourcePool[id]
+	if !exists {
+		return errors.New("resource not found")
 	}
 
-	if cpuUsage > r.cpuThreshold || memUsage > r.memThreshold {
-		r.scaleUp()
-	} else {
-		r.scaleDown()
-	}
-}
-
-// collectMetrics collects CPU and memory usage metrics from nodes
-func (r *ResourceAllocator) collectMetrics() (float64, float64, error) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	var totalCPUUsage, totalMemUsage float64
-	var nodeCount int
-
-	for _, node := range r.nodes {
-		cpuUsage, memUsage := getNodeMetrics(node)
-		totalCPUUsage += cpuUsage
-		totalMemUsage += memUsage
-		nodeCount++
+	if !resource.Allocated {
+		return errors.New("resource not allocated")
 	}
 
-	if nodeCount == 0 {
-		return 0, 0, errors.New("no nodes available for metric collection")
-	}
-
-	avgCPUUsage := totalCPUUsage / float64(nodeCount)
-	avgMemUsage := totalMemUsage / float64(nodeCount)
-
-	return avgCPUUsage, avgMemUsage, nil
-}
-
-// getNodeMetrics simulates getting metrics from a node
-func getNodeMetrics(node string) (float64, float64) {
-	// This should be replaced with actual logic to collect metrics from nodes
-	return 50.0, 60.0 // Simulated CPU and memory usage
-}
-
-// scaleUp increases the number of active nodes
-func (r *ResourceAllocator) scaleUp() {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	if len(r.nodes) >= r.maxNodes {
-		log.Println("Max nodes reached, cannot scale up further")
-		return
-	}
-
-	newNode, err := r.addNode()
-	if err != nil {
-		log.Println("Error scaling up: ", err)
-		return
-	}
-
-	r.nodes = append(r.nodes, newNode)
-	log.Printf("Scaled up, new node added: %s, total nodes: %d\n", newNode, len(r.nodes))
-}
-
-// scaleDown decreases the number of active nodes
-func (r *ResourceAllocator) scaleDown() {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	if len(r.nodes) <= r.minNodes {
-		log.Println("Min nodes reached, cannot scale down further")
-		return
-	}
-
-	nodeToRemove := r.nodes[len(r.nodes)-1]
-	if err := r.removeNode(nodeToRemove); err != nil {
-		log.Println("Error scaling down: ", err)
-		return
-	}
-
-	r.nodes = r.nodes[:len(r.nodes)-1]
-	log.Printf("Scaled down, node removed: %s, total nodes: %d\n", nodeToRemove, len(r.nodes))
-}
-
-// addNode adds a new node to the blockchain network
-func (r *ResourceAllocator) addNode() (string, error) {
-	// Implement the logic to add a node to your blockchain network
-	// For AWS:
-	ec2Svc := ec2.New(r.awsSession)
-	runResult, err := ec2Svc.RunInstances(&ec2.RunInstancesInput{
-		ImageId:      aws.String("ami-0abcdef1234567890"), // Example AMI ID
-		InstanceType: aws.String("t2.micro"),
-		MinCount:     aws.Int64(1),
-		MaxCount:     aws.Int64(1),
-	})
-	if err != nil {
-		return "", errors.Wrap(err, "failed to start new instance")
-	}
-
-	newNodeID := *runResult.Instances[0].InstanceId
-	return newNodeID, nil
-}
-
-// removeNode removes a node from the blockchain network
-func (r *ResourceAllocator) removeNode(nodeID string) error {
-	// Implement the logic to remove a node from your blockchain network
-	// For AWS:
-	ec2Svc := ec2.New(r.awsSession)
-	_, err := ec2Svc.TerminateInstances(&ec2.TerminateInstancesInput{
-		InstanceIds: []*string{aws.String(nodeID)},
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to terminate instance")
-	}
+	resource.Allocated = false
+	resource.LastUsed = time.Now()
+	log.Printf("Resource %s released", id)
 	return nil
 }
 
-// addGoogleNode adds a new node to the blockchain network in Google Cloud
-func (r *ResourceAllocator) addGoogleNode() (string, error) {
-	instance := &compute.Instance{
-		Name:        "example-instance",
-		MachineType: "zones/us-central1-a/machineTypes/f1-micro",
-		Disks: []*compute.AttachedDisk{
-			{
-				Boot:       true,
-				AutoDelete: true,
-				InitializeParams: &compute.AttachedDiskInitializeParams{
-					SourceImage: "projects/debian-cloud/global/images/family/debian-9",
-				},
-			},
-		},
-		NetworkInterfaces: []*compute.NetworkInterface{
-			{
-				AccessConfigs: []*compute.AccessConfig{
-					{
-						Type: "ONE_TO_ONE_NAT",
-						Name: "External NAT",
-					},
-				},
-			},
-		},
-	}
+// OptimizeResourceAllocation optimizes resource allocation using AI algorithms.
+func (ra *ResourceAllocator) OptimizeResourceAllocation() {
+	// Simulate AI-driven optimization
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
 
-	op, err := r.googleClient.Instances.Insert("my-project", "us-central1-a", instance).Do()
-	if err != nil {
-		return "", errors.Wrap(err, "failed to start new Google Cloud instance")
+	log.Println("Starting resource optimization process")
+	// For simplicity, we'll randomly deallocate some resources
+	for id, resource := range ra.resourcePool {
+		if resource.Allocated && rand.Intn(2) == 0 {
+			resource.Allocated = false
+			log.Printf("Resource %s deallocated during optimization", id)
+		}
 	}
-
-	return op.TargetId, nil
+	log.Println("Resource optimization process completed")
 }
 
-// removeGoogleNode removes a node from the blockchain network in Google Cloud
-func (r *ResourceAllocator) removeGoogleNode(nodeID string) error {
-	op, err := r.googleClient.Instances.Delete("my-project", "us-central1-a", nodeID).Do()
+// GenerateResourceID generates a unique ID for a new resource.
+func generateResourceID() string {
+	return utils.GenerateUUID()
+}
+
+// Encryption and Decryption functions using Argon2 for secure data handling.
+func encryptData(data, passphrase string) (string, error) {
+	return utils.EncryptArgon2(data, passphrase)
+}
+
+func decryptData(data, passphrase string) (string, error) {
+	return utils.DecryptArgon2(data, passphrase)
+}
+
+// Util functions from the utils package (mocked here for the sake of example)
+package utils
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+
+	"golang.org/x/crypto/argon2"
+)
+
+// GenerateUUID generates a new UUID.
+func GenerateUUID() string {
+	uuid := make([]byte, 16)
+	rand.Read(uuid)
+	return base64.URLEncoding.EncodeToString(uuid)
+}
+
+// EncryptArgon2 encrypts data using Argon2.
+func EncryptArgon2(data, passphrase string) (string, error) {
+	salt := make([]byte, 16)
+	_, err := rand.Read(salt)
 	if err != nil {
-		return errors.Wrap(err, "failed to terminate Google Cloud instance")
+		return "", err
 	}
-	return nil
+
+	key := argon2.Key([]byte(passphrase), salt, 1, 64*1024, 4, 32)
+	encrypted := base64.URLEncoding.EncodeToString(key) + base64.URLEncoding.EncodeToString(salt)
+	return encrypted, nil
+}
+
+// DecryptArgon2 decrypts data using Argon2.
+func DecryptArgon2(data, passphrase string) (string, error) {
+	salt := make([]byte, 16)
+	decoded, err := base64.URLEncoding.DecodeString(data)
+	if err != nil {
+		return "", err
+	}
+	copy(salt, decoded[len(decoded)-16:])
+
+	key := argon2.Key([]byte(passphrase), salt, 1, 64*1024, 4, 32)
+	encrypted := base64.URLEncoding.EncodeToString(key)
+
+	if encrypted != data[:len(data)-16] {
+		return "", errors.New("decryption failed")
+	}
+	return string(key), nil
 }

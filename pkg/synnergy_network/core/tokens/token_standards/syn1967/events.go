@@ -1,103 +1,153 @@
 package syn1967
 
 import (
+	"encoding/json"
+	"errors"
 	"time"
-	"fmt"
+
+	"github.com/synnergy_network_blockchain/pkg/synnergy_network/core/tokens/token_standards/syn1967/assets"
+	"github.com/synnergy_network_blockchain/pkg/synnergy_network/core/tokens/token_standards/syn1967/security"
+	"github.com/synnergy_network_blockchain/pkg/synnergy_network/core/tokens/token_standards/syn1967/storage"
 )
 
-// CommodityTokenEvent defines the base structure for events related to commodity tokens.
-type CommodityTokenEvent struct {
-	Type      string    `json:"type"`      // Type of the event: Issued, Transferred, Updated, Deleted
-	Timestamp time.Time `json:"timestamp"` // Time when the event occurred
-	Details   interface{} `json:"details"` // Specific event details
+// Event represents a blockchain event
+type Event struct {
+	ID        string    `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	EventType string    `json:"event_type"`
+	Data      string    `json:"data"`
 }
 
-// TokenIssuedDetails includes details specific to when a token is issued.
-type TokenIssuedDetails struct {
-	TokenID    string  `json:"tokenId"`
-	Commodity  string  `json:"commodity"`
-	Amount     float64 `json:"amount"`
-	IssuedTo   string  `json:"issuedTo"`
-}
-
-// TokenTransferredDetails includes details for when a token's ownership is transferred.
-type TokenTransferredDetails struct {
-	TokenID    string `json:"tokenId"`
-	From       string `json:"from"`
-	To         string `json:"to"`
-	Amount     float64 `json:"amount"`
-}
-
-// TokenUpdatedDetails contains details for when a token's data, particularly the market price, is updated.
-type TokenUpdatedDetails struct {
-	TokenID        string  `json:"tokenId"`
-	NewPrice       float64 `json:"newPrice"`
-}
-
-// TokenDeletedDetails provides details when a token is deleted from the ledger.
-type TokenDeletedDetails struct {
-	TokenID string `json:"tokenId"`
-}
-
-// EmitTokenIssued emits an event when a new token is issued.
-func EmitTokenIssued(tokenID, commodity string, amount float64, issuedTo string) {
-	event := CommodityTokenEvent{
-		Type:      "Issued",
-		Timestamp: time.Now(),
-		Details: TokenIssuedDetails{
-			TokenID:    tokenID,
-			Commodity:  commodity,
-			Amount:     amount,
-			IssuedTo:   issuedTo,
-		},
+// NewEvent creates a new event
+func NewEvent(eventType string, data interface{}) (*Event, error) {
+	eventData, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
 	}
-	// Normally you would send this to an event handling system or log it
-	logEvent(event)
-}
 
-// EmitTokenTransferred emits an event when a token is transferred from one owner to another.
-func EmitTokenTransferred(tokenID, from, to string, amount float64) {
-	event := CommodityTokenEvent{
-		Type:      "Transferred",
+	event := &Event{
+		ID:        generateEventID(),
 		Timestamp: time.Now(),
-		Details: TokenTransferredDetails{
-			TokenID: tokenID,
-			From:    from,
-			To:      to,
-			Amount:  amount,
-		},
+		EventType: eventType,
+		Data:      string(eventData),
 	}
-	logEvent(event)
+
+	return event, nil
 }
 
-// EmitTokenUpdated emits an event when a token's market price is updated.
-func EmitTokenUpdated(tokenID string, newPrice float64) {
-	event := CommodityTokenEvent{
-		Type:      "Updated",
-		Timestamp: time.Now(),
-		Details: TokenUpdatedDetails{
-			TokenID:  tokenID,
-			NewPrice: newPrice,
-		},
-	}
-	logEvent(event)
+// LogEvent logs the event to storage
+func (e *Event) LogEvent() error {
+	return storage.SaveEvent(e)
 }
 
-// EmitTokenDeleted emits an event when a token is deleted.
-func EmitTokenDeleted(tokenID string) {
-	event := CommodityTokenEvent{
-		Type:      "Deleted",
-		Timestamp: time.Now(),
-		Details: TokenDeletedDetails{
-			TokenID: tokenID,
-		},
-	}
-	logEvent(event)
+// generateEventID generates a unique ID for the event
+func generateEventID() string {
+	// Implement a method to generate a unique event ID
+	return security.GenerateUniqueID()
 }
 
-// logEvent simulates logging the event to an external system.
-func logEvent(event CommodityTokenEvent) {
-	// This function would integrate with an actual event bus or logging system.
-	// For simulation, we'll just print the event to standard output (or use structured logging in production).
-	fmt.Printf("Event Emitted: %+v\n", event)
+// LogTokenMinting logs a token minting event
+func LogTokenMinting(tokenID string, amount float64, owner string) error {
+	eventData := map[string]interface{}{
+		"token_id": tokenID,
+		"amount":   amount,
+		"owner":    owner,
+	}
+
+	event, err := NewEvent("token_minting", eventData)
+	if err != nil {
+		return err
+	}
+
+	return event.LogEvent()
+}
+
+// LogTokenBurning logs a token burning event
+func LogTokenBurning(tokenID string, amount float64, owner string) error {
+	eventData := map[string]interface{}{
+		"token_id": tokenID,
+		"amount":   amount,
+		"owner":    owner,
+	}
+
+	event, err := NewEvent("token_burning", eventData)
+	if err != nil {
+		return err
+	}
+
+	return event.LogEvent()
+}
+
+// LogOwnershipTransfer logs an ownership transfer event
+func LogOwnershipTransfer(tokenID string, from string, to string, amount float64) error {
+	eventData := map[string]interface{}{
+		"token_id": tokenID,
+		"from":     from,
+		"to":       to,
+		"amount":   amount,
+	}
+
+	event, err := NewEvent("ownership_transfer", eventData)
+	if err != nil {
+		return err
+	}
+
+	return event.LogEvent()
+}
+
+// LogPriceAdjustment logs a price adjustment event
+func LogPriceAdjustment(tokenID string, oldPrice float64, newPrice float64) error {
+	eventData := map[string]interface{}{
+		"token_id":  tokenID,
+		"old_price": oldPrice,
+		"new_price": newPrice,
+	}
+
+	event, err := NewEvent("price_adjustment", eventData)
+	if err != nil {
+		return err
+	}
+
+	return event.LogEvent()
+}
+
+// LogAuction logs an auction event
+func LogAuction(tokenID string, auctionDetails assets.AuctionDetails) error {
+	eventData := map[string]interface{}{
+		"token_id":        tokenID,
+		"auction_details": auctionDetails,
+	}
+
+	event, err := NewEvent("auction", eventData)
+	if err != nil {
+		return err
+	}
+
+	return event.LogEvent()
+}
+
+// RetrieveEvent retrieves an event from storage
+func RetrieveEvent(eventID string) (*Event, error) {
+	event, err := storage.GetEvent(eventID)
+	if err != nil {
+		return nil, err
+	}
+	return event, nil
+}
+
+// ValidateEventSignature validates the signature of the event data
+func ValidateEventSignature(event *Event, signature string) error {
+	if !security.ValidateSignature(event.ID, signature, event.Data) {
+		return errors.New("invalid event signature")
+	}
+	return nil
+}
+
+// AuditEvents generates an audit trail of events
+func AuditEvents(tokenID string) ([]Event, error) {
+	events, err := storage.GetEventsByTokenID(tokenID)
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
 }

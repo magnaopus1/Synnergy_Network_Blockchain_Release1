@@ -1,113 +1,192 @@
 package storage
 
 import (
-    "crypto/aes"
-    "crypto/cipher"
-    "crypto/rand"
-    "io"
-    "io/ioutil"
-    "os"
-    "path/filepath"
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"io"
+	"time"
 
-    "github.com/ipfs/go-ipfs-api"
-    "golang.org/x/crypto/scrypt"
+	"github.com/google/uuid"
+	"github.com/ipfs/go-ipfs-api"
+	"github.com/syndtr/goleveldb/leveldb"
+	"golang.org/x/crypto/scrypt"
 )
 
-// FileStorage manages file operations for blockchain data storage, ensuring security and efficiency.
-type FileStorage struct {
-    encryptionKey []byte
-    ipfsShell     *shell.Shell
+// File represents the structure for stored files
+type File struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Hash      string    `json:"hash"`
+	Metadata  string    `json:"metadata"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
-// NewFileStorage initializes a new FileStorage with a specified encryption key and IPFS connection.
-func NewFileStorage(password string) (*FileStorage, error) {
-    key, err := scrypt.Key([]byte(password), []byte("salt"), 16384, 8, 1, 32)
-    if err != nil {
-        return nil, err
-    }
-
-    return &FileStorage{
-        encryptionKey: key,
-        ipfsShell:     shell.NewShell("localhost:5001"),
-    }, nil
+// StorageService interface for file storage operations
+type StorageService interface {
+	SaveFile(name string, data []byte, metadata string) (string, error)
+	GetFile(id string) ([]byte, error)
+	DeleteFile(id string) error
+	ListFiles() ([]File, error)
 }
 
-// EncryptAndStoreFile encrypts and stores the file at the specified path.
-func (fs *FileStorage) EncryptAndStoreFile(filePath string) (string, error) {
-    data, err := ioutil.ReadFile(filePath)
-    if err != nil {
-        return "", err
-    }
-
-    encryptedData, err := fs.encryptData(data)
-    if err != nil {
-        return "", err
-    }
-
-    cid, err := fs.ipfsShell.Add(bytes.NewReader(encryptedData))
-    if err != nil {
-        return "", err
-    }
-
-    return cid, nil
+// LocalStorage implementation of StorageService using LevelDB and IPFS
+type LocalStorage struct {
+	db   *leveldb.DB
+	ipfs *shell.Shell
+	key  []byte
 }
 
-// RetrieveAndDecryptFile retrieves and decrypts the file identified by the cid.
-func (fs *FileStorage) RetrieveAndDecryptFile(cid string) ([]byte, error) {
-    reader, err := fs.ipfsShell.Cat(cid)
-    if err != nil {
-        return nil, err
-    }
-    encryptedData, err := ioutil.ReadAll(reader)
-    if err != nil {
-        return nil, err
-    }
+// NewLocalStorage creates a new instance of LocalStorage
+func NewLocalStorage(dbPath string, ipfsURL string, encryptionKey string) (*LocalStorage, error) {
+	db, err := leveldb.OpenFile(dbPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	ipfs := shell.NewShell(ipfsURL)
 
-    return fs.decryptData(encryptedData)
+	key, err := scrypt.Key([]byte(encryptionKey), []byte("salt"), 1<<15, 8, 1, 32)
+	if err != nil {
+		return nil, err
+	}
+
+	return &LocalStorage{
+		db:   db,
+		ipfs: ipfs,
+		key:  key,
+	}, nil
 }
 
-// encryptData handles the encryption of data using AES.
-func (fs *FileStorage) encryptData(data []byte) ([]byte, error) {
-    block, err := aes.NewCipher(fs.encryptionKey)
-    if err != nil {
-        return nil, err
-    }
+// SaveFile saves a file to local storage and IPFS
+func (ls *LocalStorage) SaveFile(name string, data []byte, metadata string) (string, error) {
+	// Encrypt data
+	encryptedData, err := encrypt(data, ls.key)
+	if err != nil {
+		return "", err
+	}
 
-    gcm, err := cipher.NewGCM(block)
-    if err != nil {
-        return nil, err
-    }
+	// Upload to IPFS
+	hash, err := ls.ipfs.Add(bytes.NewReader(encryptedData))
+	if err != nil {
+		return "", err
+	}
 
-    nonce := make([]byte, gcm.NonceSize())
-    if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-        return nil, err
-    }
+	// Generate file ID
+	id := uuid.New().String()
 
-    return gcm.Seal(nonce, nonce, data, nil), nil
+	// Create file record
+	file := File{
+		ID:        id,
+		Name:      name,
+		Hash:      hash,
+		Metadata:  metadata,
+		Timestamp: time.Now(),
+	}
+
+	// Store file metadata in LevelDB
+	fileData, err := json.Marshal(file)
+	if err != nil {
+		return "", err
+	}
+	err = ls.db.Put([]byte(id), fileData, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return id, nil
 }
 
-// decryptData handles the decryption of data using AES.
-func (fs *FileStorage) decryptYou might also consider implementing more sophisticated error handling, logging, and security features to ensure the robustness and scalability of the file management system.Data(data []byte) ([]byte, error) {
-    block, err := aes.NewCipher(fs.encryptionKey)
-    if err != nil {
-        return nil, err
-    }
+// GetFile retrieves a file from local storage and IPFS
+func (ls *LocalStorage) GetFile(id string) ([]byte, error) {
+	// Retrieve file metadata from LevelDB
+	fileData, err := ls.db.Get([]byte(id), nil)
+	if err != nil {
+		return nil, err
+	}
 
-    gcm, err := cipher.NewGCM(block)
-    if err != nil {
-        return nil, err
-    }
+	var file File
+	err = json.Unmarshal(fileData, &file)
+	if err != nil {
+		return nil, err
+	}
 
-    nonceSize := gcm.NonceSize()
-    if len(data) < nonceSize {
-        return nil, err
-    }
+	// Retrieve data from IPFS
+	reader, err := ls.ipfs.Cat(file.Hash)
+	if err != nil {
+		return nil, err
+	}
 
-    nonce, ciphertext := data[:nonceSize], data[nonceSize:]
-    return gcm.Open(nil, nonce, ciphertext, nil)
+	var buffer bytes.Buffer
+	_, err = io.Copy(&buffer, reader)
+	if err != nil {
+		return nil, err
+	}
+
+	// Decrypt data
+	data, err := decrypt(buffer.Bytes(), ls.key)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
 }
 
-// Cleanup is a utility function to remove temporary files securely.
-func (fs *FileStorage) Cleanup(filePath string) error {
-    return os.Remove(filePath)
+// DeleteFile deletes a file from local storage
+func (ls *LocalStorage) DeleteFile(id string) error {
+	return ls.db.Delete([]byte(id), nil)
+}
+
+// ListFiles lists all files in local storage
+func (ls *LocalStorage) ListFiles() ([]File, error) {
+	var files []File
+	iter := ls.db.NewIterator(nil, nil)
+	for iter.Next() {
+		var file File
+		err := json.Unmarshal(iter.Value(), &file)
+		if err != nil {
+			continue
+		}
+		files = append(files, file)
+	}
+	iter.Release()
+	return files, iter.Error()
+}
+
+// Encryption function using AES
+func encrypt(data, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	return gcm.Seal(nonce, nonce, data, nil), nil
+}
+
+// Decryption function using AES
+func decrypt(data, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return nil, errors.New("ciphertext too short")
+	}
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	return gcm.Open(nil, nonce, ciphertext, nil)
 }

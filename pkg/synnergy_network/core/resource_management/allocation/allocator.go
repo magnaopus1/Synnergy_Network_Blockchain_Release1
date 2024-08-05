@@ -1,99 +1,180 @@
 package allocation
 
 import (
+	"fmt"
+	"log"
 	"sync"
-	"errors"
-	"synthron_blockchain/pkg/core/resource_management/models"
+	"time"
+
+	"github.com/synnergy_network/pkg/synnergy_network/core/resource_management/auditing"
+	"github.com/synnergy_network/pkg/synnergy_network/core/resource_management/contracts"
+	"github.com/synnergy_network/pkg/synnergy_network/core/resource_management/resource_pools"
+	"github.com/synnergy_network/pkg/synnergy_network/core/resource_management/optimization"
+	"github.com/synnergy_network/pkg/synnergy_network/core/resource_management/security"
 )
 
-// Allocator defines the structure for resource allocation
-type Allocator struct {
-	resourcePool  *ResourcePool
-	mutex         sync.Mutex
+type ResourceAllocator struct {
+	mu                sync.Mutex
+	pool              *resource_pools.ResourcePool
+	contractManager   *contracts.ContractManager
+	securityManager   *security.SecurityManager
+	auditManager      *auditing.AuditManager
+	optimizationManager *optimization.OptimizationManager
 }
 
-// NewAllocator creates a new instance of Allocator
-func NewAllocator(initialResources models.Resources) *Allocator {
-	return &Allocator{
-		resourcePool: NewResourcePool(initialResources),
+func NewResourceAllocator(pool *resource_pools.ResourcePool, cm *contracts.ContractManager, sm *security.SecurityManager, am *auditing.AuditManager, om *optimization.OptimizationManager) *ResourceAllocator {
+	return &ResourceAllocator{
+		pool:              pool,
+		contractManager:   cm,
+		securityManager:   sm,
+		auditManager:      am,
+		optimizationManager: om,
 	}
 }
 
-// AllocateResources dynamically allocates resources based on demand
-func (a *Allocator) AllocateResources(request models.ResourceRequest) (models.Resources, error) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
+// Dynamic Allocation Mechanisms
+func (ra *ResourceAllocator) AllocateResource(nodeID string, amount int) error {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
 
-	availableResources := a.resourcePool.Available()
-	if !availableResources.CanFulfill(request) {
-		return models.Resources{}, errors.New("insufficient resources available")
+	// Ensure security checks
+	if !ra.securityManager.ValidateNode(nodeID) {
+		return fmt.Errorf("invalid node ID: %s", nodeID)
 	}
 
-	allocated := a.resourcePool.Allocate(request)
-	return allocated, nil
-}
+	// Check available resources
+	if ra.pool.Available() < amount {
+		return fmt.Errorf("not enough resources available")
+	}
 
-// ReleaseResources releases resources back to the pool
-func (a *Allocator) ReleaseResources(resources models.Resources) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
+	// Allocate resources
+	if err := ra.pool.Allocate(nodeID, amount); err != nil {
+		return fmt.Errorf("allocation failed: %v", err)
+	}
 
-	a.resourcePool.Release(resources)
-}
+	// Log the allocation for auditing purposes
+	ra.auditManager.LogAllocation(nodeID, amount)
 
-// MonitorAndAdjust continuously monitors resource usage and adjusts allocations
-func (a *Allocator) MonitorAndAdjust() {
-	go func() {
-		for {
-			select {
-			case <-time.Tick(1 * time.Minute):
-				// Implement logic to adjust resources based on real-time metrics
-				a.AdjustAllocations()
-			}
-		}
-	}()
-}
+	// Optimize resource usage
+	ra.optimizationManager.Optimize(nodeID, amount)
 
-// AdjustAllocations dynamically adjusts resource allocations based on current demand and usage statistics
-func (a *Allocator) AdjustAllocations() {
-	// This would involve complex logic that checks current usage, forecasts demand, and optimizes resource distribution
-}
-
-// AuditAllocations checks and ensures that all allocations meet the predefined rules and are fair
-func (a *Allocator) AuditAllocations() error {
-	// Logic to audit current resource allocations and report discrepancies
 	return nil
 }
 
-// ResourcePool represents a pool of resources that can be allocated
-type ResourcePool struct {
-	total     models.Resources
-	allocated models.Resources
+func (ra *ResourceAllocator) DeallocateResource(nodeID string, amount int) error {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+
+	// Deallocate resources
+	if err := ra.pool.Deallocate(nodeID, amount); err != nil {
+		return fmt.Errorf("deallocation failed: %v", err)
+	}
+
+	// Log the deallocation for auditing purposes
+	ra.auditManager.LogDeallocation(nodeID, amount)
+
+	return nil
 }
 
-// NewResourcePool creates a new resource pool with given resources
-func NewResourcePool(resources models.Resources) *ResourcePool {
-	return &ResourcePool{
-		total: resources,
-		allocated: models.Resources{},
+// Real-time Monitoring and Adaptive Scaling
+func (ra *ResourceAllocator) MonitorAndScale() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			// Real-time resource monitoring
+			metrics := ra.pool.Monitor()
+
+			// Adaptive scaling based on metrics
+			for nodeID, usage := range metrics {
+				if usage > 80 {
+					// Scale up resources
+					err := ra.AllocateResource(nodeID, 10)
+					if err != nil {
+						log.Printf("Failed to allocate resources for node %s: %v", nodeID, err)
+					}
+				} else if usage < 20 {
+					// Scale down resources
+					err := ra.DeallocateResource(nodeID, 10)
+					if err != nil {
+						log.Printf("Failed to deallocate resources for node %s: %v", nodeID, err)
+					}
+				}
+			}
+		}
 	}
 }
 
-// Available calculates and returns the available resources
-func (rp *ResourcePool) Available() models.Resources {
-	return rp.total.Subtract(rp.allocated)
+// Priority-Based Allocation
+func (ra *ResourceAllocator) AllocatePriorityResource(nodeID string, amount int, priority int) error {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+
+	// Ensure security checks
+	if !ra.securityManager.ValidateNode(nodeID) {
+		return fmt.Errorf("invalid node ID: %s", nodeID)
+	}
+
+	// Check available resources
+	if ra.pool.Available() < amount {
+		return fmt.Errorf("not enough resources available")
+	}
+
+	// Allocate resources based on priority
+	if err := ra.pool.AllocateWithPriority(nodeID, amount, priority); err != nil {
+		return fmt.Errorf("allocation failed: %v", err)
+	}
+
+	// Log the allocation for auditing purposes
+	ra.auditManager.LogPriorityAllocation(nodeID, amount, priority)
+
+	// Optimize resource usage
+	ra.optimizationManager.Optimize(nodeID, amount)
+
+	return nil
 }
 
-// Allocate resources from the pool
-func (rp *ResourceContainer) Allocate(request models.ResourceRequest) models.Resources {
-	allocated := request.CalculateAllocation(rp.Available())
-	rp.allocated = rp.allocated.Add(allocated)
-	return allocated
+// Smart Contract-Based Resource Management
+func (ra *ResourceAllocator) SmartContractResourceAllocation(contractID string, amount int) error {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+
+	// Validate the smart contract
+	if !ra.contractManager.ValidateContract(contractID) {
+		return fmt.Errorf("invalid contract ID: %s", contractID)
+	}
+
+	// Check available resources
+	if ra.pool.Available() < amount {
+		return fmt.Errorf("not enough resources available")
+	}
+
+	// Allocate resources as per smart contract
+	if err := ra.contractManager.ExecuteContract(contractID, amount); err != nil {
+		return fmt.Errorf("contract execution failed: %v", err)
+	}
+
+	// Log the contract execution for auditing purposes
+	ra.auditManager.LogContractExecution(contractID, amount)
+
+	// Optimize resource usage
+	ra.optimizationManager.Optimize(contractID, amount)
+
+	return nil
 }
 
-// Release resources back to the pool
-func (rp *ResourcePool) Release(resources models.Resources) {
-	rp.allocated = rp.allocated.Subtract(resources)
+func (ra *ResourceAllocator) GetResourceStatus() map[string]int {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+
+	return ra.pool.Status()
 }
 
-// This file also needs to include necessary utilities for resource calculations and manipulations.
+func (ra *ResourceAllocator) AuditResources() {
+	ra.mu.Lock()
+	defer ra.mu.Unlock()
+
+	ra.auditManager.ConductAudit(ra.pool.Status())
+}

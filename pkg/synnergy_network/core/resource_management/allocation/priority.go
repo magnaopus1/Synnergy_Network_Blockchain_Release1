@@ -1,94 +1,143 @@
 package allocation
 
 import (
-	"sync"
-	"errors"
+    "sync"
+    "time"
+    "crypto/rand"
+    "crypto/sha256"
+    "encoding/hex"
+    "errors"
 )
 
-// Priority levels defined for various blockchain operations.
+// Priority levels
 const (
-	LowPriority    = 1
-	MediumPriority = 2
-	HighPriority   = 3
-	CriticalPriority = 4
+    HighPriority   = 1
+    MediumPriority = 2
+    LowPriority    = 3
 )
 
-// Priority defines the structure for resource allocation priorities.
-type Priority struct {
-	mutex     sync.Mutex
-	priorities map[string]int
+// Transaction represents a blockchain transaction with priority.
+type Transaction struct {
+    ID         string
+    Value      int64
+    Priority   int
+    Timestamp  time.Time
 }
 
-// NewPriority creates a new Priority manager instance.
-func NewPriority() *Priority {
-	return &Priority{
-		priorities: make(map[string]int),
-	}
+// PriorityQueue is a thread-safe priority queue for transactions.
+type PriorityQueue struct {
+    highPriority   []*Transaction
+    mediumPriority []*Transaction
+    lowPriority    []*Transaction
+    lock           sync.Mutex
 }
 
-// SetPriority sets the priority level for a specific transaction or operation.
-func (p *Priority) SetPriority(key string, level int) error {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if level < LowPriority || level > CriticalPriority {
-		return errors.New("invalid priority level")
-	}
-
-	p.priorities[key] = level
-	return nil
+// NewPriorityQueue initializes a new priority queue.
+func NewPriorityQueue() *PriorityQueue {
+    return &PriorityQueue{
+        highPriority:   []*Transaction{},
+        mediumPriority: []*Transaction{},
+        lowPriority:    []*Transaction{},
+    }
 }
 
-// GetPriority retrieves the priority level for a given key.
-func (p *Priority) GetPriority(key string) (int, error) {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+// AddTransaction adds a new transaction to the priority queue.
+func (pq *PriorityQueue) AddTransaction(tx *Transaction) {
+    pq.lock.Lock()
+    defer pq.lock.Unlock()
 
-	level, exists := p.priorities[key]
-	if !exists {
-		return 0, errors.New("priority not found")
-	}
-
-	return level, nil
+    switch tx.Priority {
+    case HighPriority:
+        pq.highPriority = append(pq.highPriority, tx)
+    case MediumPriority:
+        pq.mediumPriority = append(pq.mediumPriority, tx)
+    case LowPriority:
+        pq.lowPriority = append(pq.lowPriority, tx)
+    default:
+        pq.lowPriority = append(pq.lowPriority, tx)
+    }
 }
 
-// RemovePriority removes the priority setting for a given key.
-func (p *Priority) RemovePriority(key string) error {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
+// GetNextTransaction retrieves the next transaction based on priority.
+func (pq *PriorityQueue) GetNextTransaction() (*Transaction, error) {
+    pq.lock.Lock()
+    defer pq.lock.Unlock()
 
-	_, exists := p.priorities[key]
-	if !exists {
-		return errors.New("priority not found")
-	}
-
-	delete(p.priorities, key)
-	return nil
+    if len(pq.highPriority) > 0 {
+        tx := pq.highPriority[0]
+        pq.highPriority = pq.highPriority[1:]
+        return tx, nil
+    } else if len(pq.mediumPriority) > 0 {
+        tx := pq.mediumPriority[0]
+        pq.mediumPriority = pq.mediumPriority[1:]
+        return tx, nil
+    } else if len(pq.lowPriority) > 0 {
+        tx := pq.lowPriority[0]
+        pq.lowPriority = pq.lowPriority[1:]
+        return tx, nil
+    } else {
+        return nil, errors.New("no transactions available")
+    }
 }
 
-// UpdatePriority adjusts the priority of an existing key.
-func (p *Priority) UpdatePriority(key string, level int) error {
-	return p.SetPriority(key, level)
+// GenerateTransactionID generates a unique transaction ID using SHA-256.
+func GenerateTransactionID() (string, error) {
+    id := make([]byte, 16)
+    if _, err := rand.Read(id); err != nil {
+        return "", err
+    }
+    hash := sha256.Sum256(id)
+    return hex.EncodeToString(hash[:]), nil
 }
 
-// ListPriorities lists all current priority settings.
-func (p *Priority) ListPriorities() map[string]int {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	// Return a copy to prevent modification.
-	copied := make(map[string]int)
-	for key, value := range p.priorities {
-		copied[key] = value
-	}
-	return copied
+// CreateTransaction creates a new transaction with the given value and priority.
+func CreateTransaction(value int64, priority int) (*Transaction, error) {
+    id, err := GenerateTransactionID()
+    if err != nil {
+        return nil, err
+    }
+    return &Transaction{
+        ID:        id,
+        Value:     value,
+        Priority:  priority,
+        Timestamp: time.Now(),
+    }, nil
 }
 
-// ClearAllPriorities clears all priority settings.
-func (p *Priority) ClearAllPriorities() {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	p.priorities = make(map[string]int)
+// MonitorAndAdjust monitors the queue and adjusts resource allocation based on priorities.
+func (pq *PriorityQueue) MonitorAndAdjust() {
+    for {
+        time.Sleep(5 * time.Second)
+        pq.lock.Lock()
+        // Example logic for monitoring and adjusting
+        if len(pq.highPriority) > 10 {
+            // Implement logic to provision more resources
+        }
+        pq.lock.Unlock()
+    }
 }
 
+// StartTransactionProcessing starts the process of handling transactions.
+func (pq *PriorityQueue) StartTransactionProcessing() {
+    go func() {
+        for {
+            tx, err := pq.GetNextTransaction()
+            if err != nil {
+                time.Sleep(1 * time.Second)
+                continue
+            }
+            processTransaction(tx)
+        }
+    }()
+}
+
+// processTransaction is a placeholder for transaction processing logic.
+func processTransaction(tx *Transaction) {
+    // Implement actual transaction processing logic here
+    time.Sleep(100 * time.Millisecond)
+}
+
+func main() {
+    pq := NewPriorityQueue()
+    pq.StartTransactionProcessing()
+}

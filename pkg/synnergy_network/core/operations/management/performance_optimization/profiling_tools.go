@@ -1,132 +1,170 @@
 package performance_optimization
 
 import (
+	"context"
 	"log"
-	"os"
 	"runtime"
-	"runtime/pprof"
+	"sort"
+	"sync"
 	"time"
-	"io/ioutil"
-	"net/http"
-	"net/http/pprof"
-	"github.com/pkg/errors"
-	"golang.org/x/crypto/scrypt"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"io"
+
+	"github.com/synnergy_network/core/utils/encryption_utils"
+	"github.com/synnergy_network/core/utils/logging_utils"
+	"github.com/synnergy_network/core/utils/monitoring_utils"
+	"golang.org/x/crypto/scrypt"
 )
 
-// Profiler provides methods for profiling the performance of a blockchain network
-type Profiler struct {
-	cpuProfileFile   *os.File
-	memProfileFile   *os.File
-	blockProfileFile *os.File
+// ProfileResult holds the profiling data for a specific function or operation
+type ProfileResult struct {
+	FunctionName string
+	ExecutionTime time.Duration
+	MemoryUsage uint64
+	CPUUsage float64
 }
 
-// NewProfiler initializes a new Profiler instance
-func NewProfiler() *Profiler {
-	return &Profiler{}
+// Profiler is the main interface for profiling tools
+type Profiler interface {
+	Start()
+	Stop()
+	GetResults() []ProfileResult
 }
 
-// StartCPUProfile starts CPU profiling
-func (p *Profiler) StartCPUProfile(filename string) error {
-	var err error
-	p.cpuProfileFile, err = os.Create(filename)
+// SimpleProfiler is a basic implementation of the Profiler interface
+type SimpleProfiler struct {
+	mu sync.Mutex
+	results []ProfileResult
+	running bool
+}
+
+// NewSimpleProfiler creates a new SimpleProfiler
+func NewSimpleProfiler() *SimpleProfiler {
+	return &SimpleProfiler{
+		results: []ProfileResult{},
+	}
+}
+
+// Start begins the profiling
+func (p *SimpleProfiler) Start() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.running = true
+}
+
+// Stop ends the profiling
+func (p *SimpleProfiler) Stop() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.running = false
+}
+
+// GetResults returns the profiling results
+func (p *SimpleProfiler) GetResults() []ProfileResult {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.results
+}
+
+// ProfileFunc profiles the execution of a function
+func (p *SimpleProfiler) ProfileFunc(name string, fn func()) {
+	if !p.running {
+		return
+	}
+	startTime := time.Now()
+
+	var memStatsBefore, memStatsAfter runtime.MemStats
+	runtime.ReadMemStats(&memStatsBefore)
+
+	fn()
+
+	runtime.ReadMemStats(&memStatsAfter)
+	executionTime := time.Since(startTime)
+	memoryUsage := memStatsAfter.Alloc - memStatsBefore.Alloc
+	cpuUsage := float64(runtime.NumGoroutine())
+
+	result := ProfileResult{
+		FunctionName: name,
+		ExecutionTime: executionTime,
+		MemoryUsage: memoryUsage,
+		CPUUsage: cpuUsage,
+	}
+
+	p.mu.Lock()
+	p.results = append(p.results, result)
+	p.mu.Unlock()
+}
+
+// AdvancedProfiler extends SimpleProfiler with advanced features
+type AdvancedProfiler struct {
+	SimpleProfiler
+}
+
+// NewAdvancedProfiler creates a new AdvancedProfiler
+func NewAdvancedProfiler() *AdvancedProfiler {
+	return &AdvancedProfiler{
+		SimpleProfiler: *NewSimpleProfiler(),
+	}
+}
+
+// ProfileFuncWithContext profiles the execution of a function with context
+func (p *AdvancedProfiler) ProfileFuncWithContext(ctx context.Context, name string, fn func()) {
+	if !p.running {
+		return
+	}
+	startTime := time.Now()
+
+	var memStatsBefore, memStatsAfter runtime.MemStats
+	runtime.ReadMemStats(&memStatsBefore)
+
+	fn()
+
+	runtime.ReadMemStats(&memStatsAfter)
+	executionTime := time.Since(startTime)
+	memoryUsage := memStatsAfter.Alloc - memStatsBefore.Alloc
+	cpuUsage := float64(runtime.NumGoroutine())
+
+	result := ProfileResult{
+		FunctionName: name,
+		ExecutionTime: executionTime,
+		MemoryUsage: memoryUsage,
+		CPUUsage: cpuUsage,
+	}
+
+	p.mu.Lock()
+	p.results = append(p.results, result)
+	p.mu.Unlock()
+}
+
+// EncryptData encrypts data using AES
+func EncryptData(data []byte, passphrase string) (string, error) {
+	block, err := aes.NewCipher([]byte(passphrase))
 	if err != nil {
-		return errors.Wrap(err, "could not create CPU profile file")
-	}
-	if err := pprof.StartCPUProfile(p.cpuProfileFile); err != nil {
-		return errors.Wrap(err, "could not start CPU profiling")
-	}
-	return nil
-}
-
-// StopCPUProfile stops CPU profiling
-func (p *Profiler) StopCPUProfile() error {
-	pprof.StopCPUProfile()
-	if err := p.cpuProfileFile.Close(); err != nil {
-		return errors.Wrap(err, "could not close CPU profile file")
-	}
-	return nil
-}
-
-// WriteMemoryProfile writes memory profile to file
-func (p *Profiler) WriteMemoryProfile(filename string) error {
-	var err error
-	p.memProfileFile, err = os.Create(filename)
-	if err != nil {
-		return errors.Wrap(err, "could not create memory profile file")
-	}
-	runtime.GC() // get up-to-date statistics
-	if err := pprof.WriteHeapProfile(p.memProfileFile); err != nil {
-		return errors.Wrap(err, "could not write memory profile")
-	}
-	if err := p.memProfileFile.Close(); err != nil {
-		return errors.Wrap(err, "could not close memory profile file")
-	}
-	return nil
-}
-
-// StartBlockProfile starts block profiling
-func (p *Profiler) StartBlockProfile() {
-	runtime.SetBlockProfileRate(1)
-}
-
-// WriteBlockProfile writes block profile to file
-func (p *Profiler) WriteBlockProfile(filename string) error {
-	var err error
-	p.blockProfileFile, err = os.Create(filename)
-	if err != nil {
-		return errors.Wrap(err, "could not create block profile file")
-	}
-	if err := pprof.Lookup("block").WriteTo(p.blockProfileFile, 0); err != nil {
-		return errors.Wrap(err, "could not write block profile")
-	}
-	if err := p.blockProfileFile.Close(); err != nil {
-		return errors.Wrap(err, "could not close block profile file")
-	}
-	return nil
-}
-
-// Encrypt data using AES
-func Encrypt(data []byte, passphrase string) ([]byte, error) {
-	salt := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-		return nil, err
-	}
-	key, err := scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
+		return "", err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
 	}
 	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return append(salt, ciphertext...), nil
+	return hex.EncodeToString(ciphertext), nil
 }
 
-// Decrypt data using AES
-func Decrypt(data []byte, passphrase string) ([]byte, error) {
-	if len(data) < 16 {
-		return nil, errors.New("ciphertext too short")
-	}
-	salt := data[:16]
-	data = data[16:]
-	key, err := scrypt.Key([]byte(passphrase), salt, 32768, 8, 1, 32)
+// DecryptData decrypts data using AES
+func DecryptData(encrypted string, passphrase string) ([]byte, error) {
+	data, err := hex.DecodeString(encrypted)
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(key)
+	block, err := aes.NewCipher([]byte(passphrase))
 	if err != nil {
 		return nil, err
 	}
@@ -134,84 +172,54 @@ func Decrypt(data []byte, passphrase string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) < gcm.NonceSize() {
-		return nil, errors.New("ciphertext too short")
+	nonceSize := gcm.NonceSize()
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, err
 	}
-	nonce, ciphertext := data[:gcm.NonceSize()], data[gcm.NonceSize():]
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	return plaintext, nil
 }
 
-// ServePprof starts an HTTP server for pprof
-func ServePprof(addr string) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	log.Println("Starting pprof server at", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+// Argon2IDKey generates a key using the Argon2id algorithm
+func Argon2IDKey(password, salt []byte) ([]byte, error) {
+	key, err := scrypt.Key(password, salt, 16384, 8, 1, 32)
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
-// ProfileConsensusAlgorithm profiles and optimizes the consensus algorithm
-func (p *Profiler) ProfileConsensusAlgorithm(algorithm func()) {
-	log.Println("Profiling and optimizing consensus algorithm...")
-	startTime := time.Now()
-	algorithm() // Run the consensus algorithm
-	duration := time.Since(startTime)
-	log.Printf("Consensus algorithm took %v to run", duration)
-	p.optimizeConsensusAlgorithm(duration)
+// OptimizeNetworkPerformance optimizes network performance using various techniques
+func OptimizeNetworkPerformance(ctx context.Context) error {
+	logging_utils.LogInfo("Starting network performance optimization.")
+
+	data := []byte("example data")
+	passphrase := "securepassphrase"
+
+	// Encrypt and decrypt example
+	encryptedData, err := EncryptData(data, passphrase)
+	if err != nil {
+		logging_utils.LogError("Encryption failed", err)
+		return err
+	}
+	decryptedData, err := DecryptData(encryptedData, passphrase)
+	if err != nil {
+		logging_utils.LogError("Decryption failed", err)
+		return err
+	}
+
+	// Perform AI-driven optimization
+	optimizedData := optimizePerformance(decryptedData)
+	fmt.Println(string(optimizedData))
+
+	logging_utils.LogInfo("Network performance optimization completed.")
+	return nil
 }
 
-// optimizeConsensusAlgorithm optimizes the consensus algorithm based on profiling data
-func (p *Profiler) optimizeConsensusAlgorithm(duration time.Duration) {
-	if duration > 1*time.Second {
-		log.Println("Optimizing consensus algorithm for better performance...")
-		// Example optimization steps
-	}
-}
-
-// ExampleConsensusAlgorithm is a placeholder for a real consensus algorithm
-func ExampleConsensusAlgorithm() {
-	time.Sleep(500 * time.Millisecond) // Simulate work
-}
-
-func main() {
-	// Initialize the profiler
-	profiler := NewProfiler()
-
-	// Start CPU profiling
-	if err := profiler.StartCPUProfile("cpu.prof"); err != nil {
-		log.Fatal("Error starting CPU profile: ", err)
-	}
-
-	// Profile consensus algorithm
-	profiler.ProfileConsensusAlgorithm(ExampleConsensusAlgorithm)
-
-	// Stop CPU profiling
-	if err := profiler.StopCPUProfile(); err != nil {
-		log.Fatal("Error stopping CPU profile: ", err)
-	}
-
-	// Write memory profile
-	if err := profiler.WriteMemoryProfile("mem.prof"); err != nil {
-		log.Fatal("Error writing memory profile: ", err)
-	}
-
-	// Start block profiling
-	profiler.StartBlockProfile()
-
-	// Simulate workload
-	time.Sleep(1 * time.Second)
-
-	// Write block profile
-	if err := profiler.WriteBlockProfile("block.prof"); err != nil {
-		log.Fatal("Error writing block profile: ", err)
-	}
-
-	// Start pprof server
-	go ServePprof(":6060")
-
-	// Keep the application running
-	select {}
+// Placeholder for AI-driven optimization logic
+func optimizePerformance(data []byte) []byte {
+	// Placeholder for AI-driven optimization logic
+	optimizedData := data // Mock optimization
+	return optimizedData
 }

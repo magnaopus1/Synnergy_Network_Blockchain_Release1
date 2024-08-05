@@ -18,7 +18,7 @@ type Config struct {
 func LoadConfig() *Config {
 	return &Config{
 		BlockSize:         getEnvAsInt("BLOCK_SIZE", 500),
-		ConsensusProtocol: getEnvAsString("CONSENSUS_PROTOCOL", "PoS"),
+		ConsensusProtocol: getEnvAsString("CONSENSUS_PROTOCOL", "SynnergyConsensus"),
 		NetworkPort:       getEnvAsInt("NETWORK_PORT", 8080),
 		BlockchainDBPath:  getEnvAsString("BLOCKCHAIN_DB_PATH", "./blockchain.db"),
 	}

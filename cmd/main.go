@@ -63,3 +63,17 @@ log
 /Users/admin/Desktop/synthron_blockchain_final/cmd/ecosystem.go
 
 19. add the ability for this to be shared between multiple peers and nodes to make a fully decentralized system.
+
+
+
+
+
+func main() {
+	router := mux.NewRouter()
+
+	// Register all transaction routes
+	apis.RegisterTransactionRoutes(router)
+
+	// Start the server
+	log.Fatal(http.ListenAndServe(":8080", router))
+}

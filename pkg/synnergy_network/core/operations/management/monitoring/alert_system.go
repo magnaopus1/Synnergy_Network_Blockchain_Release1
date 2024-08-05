@@ -2,158 +2,177 @@ package monitoring
 
 import (
 	"fmt"
-	"log"
-	"net/smtp"
-	"strings"
 	"time"
+	"encoding/json"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"net/http"
+	"log"
+	"sync"
 )
 
-// Alert represents an alert message
+// Alert represents a single alert
 type Alert struct {
-	ID          string
-	Severity    string
-	Message     string
-	Timestamp   time.Time
-	Resolved    bool
-	NodeID      string
-	Metric      string
-	CurrentValue float64
-	Threshold   float64
+	ID          string    `json:"id"`
+	Timestamp   time.Time `json:"timestamp"`
+	Severity    string    `json:"severity"`
+	Message     string    `json:"message"`
 }
 
-// AlertSystem represents the alert system for the blockchain network
+// AlertSystem represents the alert system
 type AlertSystem struct {
-	Alerts         []Alert
-	EmailRecipients []string
-	SMTPServer      string
-	SMTPPort        int
-	SMTPUser        string
-	SMTPPassword    string
+	mu             sync.Mutex
+	alerts         map[string]Alert
+	alertChannels  map[string]chan Alert
+	alertRules     map[string]AlertRule
+	prometheusGauge prometheus.Gauge
 }
 
-// NewAlertSystem initializes a new AlertSystem instance
-func NewAlertSystem(emailRecipients []string, smtpServer string, smtpPort int, smtpUser, smtpPassword string) *AlertSystem {
-	return &AlertSystem{
-		Alerts:         []Alert{},
-		EmailRecipients: emailRecipients,
-		SMTPServer:      smtpServer,
-		SMTPPort:        smtpPort,
-		SMTPUser:        smtpUser,
-		SMTPPassword:    smtpPassword,
+// AlertRule represents a rule for triggering alerts
+type AlertRule struct {
+	ID           string                 `json:"id"`
+	Description  string                 `json:"description"`
+	Severity     string                 `json:"severity"`
+	Condition    func() bool            `json:"-"`
+	Actions      []func(alert Alert)    `json:"-"`
+}
+
+// NewAlertSystem creates a new alert system
+func NewAlertSystem() *AlertSystem {
+	as := &AlertSystem{
+		alerts:         make(map[string]Alert),
+		alertChannels:  make(map[string]chan Alert),
+		alertRules:     make(map[string]AlertRule),
+		prometheusGauge: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "synnergy_alerts_total",
+			Help: "Total number of alerts generated.",
+		}),
 	}
+
+	prometheus.MustRegister(as.prometheusGauge)
+
+	return as
 }
 
-// GenerateAlert generates a new alert and sends notifications
-func (as *AlertSystem) GenerateAlert(nodeID, severity, message, metric string, currentValue, threshold float64) {
+// RegisterAlertRule registers a new alert rule
+func (as *AlertSystem) RegisterAlertRule(rule AlertRule) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	as.alertRules[rule.ID] = rule
+}
+
+// GenerateAlert generates a new alert
+func (as *AlertSystem) GenerateAlert(id, severity, message string) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
 	alert := Alert{
-		ID:          fmt.Sprintf("%d", len(as.Alerts)+1),
-		Severity:    severity,
-		Message:     message,
-		Timestamp:   time.Now(),
-		Resolved:    false,
-		NodeID:      nodeID,
-		Metric:      metric,
-		CurrentValue: currentValue,
-		Threshold:   threshold,
+		ID:        id,
+		Timestamp: time.Now(),
+		Severity:  severity,
+		Message:   message,
 	}
-	as.Alerts = append(as.Alerts, alert)
 
-	as.sendEmailNotification(alert)
-}
+	as.alerts[id] = alert
+	as.prometheusGauge.Inc()
 
-// ResolveAlert resolves an alert by its ID
-func (as *AlertSystem) ResolveAlert(alertID string) error {
-	for i := range as.Alerts {
-		if as.Alerts[i].ID == alertID {
-			as.Alerts[i].Resolved = true
-			return nil
-		}
+	for _, channel := range as.alertChannels {
+		channel <- alert
 	}
-	return fmt.Errorf("alert with ID %s not found", alertID)
-}
 
-// GetUnresolvedAlerts returns a list of unresolved alerts
-func (as *AlertSystem) GetUnresolvedAlerts() []Alert {
-	unresolved := []Alert{}
-	for _, alert := range as.Alerts {
-		if !alert.Resolved {
-			unresolved = append(unresolved, alert)
-		}
-	}
-	return unresolved
-}
-
-// sendEmailNotification sends an email notification for the alert
-func (as *AlertSystem) sendEmailNotification(alert Alert) {
-	subject := fmt.Sprintf("Blockchain Alert: %s", alert.Severity)
-	body := fmt.Sprintf("Alert ID: %s\nSeverity: %s\nMessage: %s\nTimestamp: %s\nNode ID: %s\nMetric: %s\nCurrent Value: %.2f\nThreshold: %.2f",
-		alert.ID, alert.Severity, alert.Message, alert.Timestamp.Format(time.RFC1123), alert.NodeID, alert.Metric, alert.CurrentValue, alert.Threshold)
-
-	message := fmt.Sprintf("Subject: %s\r\n\r\n%s", subject, body)
-	recipients := strings.Join(as.EmailRecipients, ",")
-	err := smtp.SendMail(fmt.Sprintf("%s:%d", as.SMTPServer, as.SMTPPort),
-		smtp.PlainAuth("", as.SMTPUser, as.SMTPPassword, as.SMTPServer),
-		as.SMTPUser, as.EmailRecipients, []byte(message))
-
-	if err != nil {
-		log.Printf("Failed to send alert email: %v", err)
-	}
-}
-
-// MonitorNodeMetrics continuously monitors node metrics and generates alerts
-func (as *AlertSystem) MonitorNodeMetrics(nodeMetricsChan <-chan NodeMetric) {
-	for metric := range nodeMetricsChan {
-		if metric.CPUUsage > 90.0 {
-			as.GenerateAlert(metric.NodeID, "Critical", "High CPU usage detected", "CPUUsage", metric.CPUUsage, 90.0)
-		}
-		if metric.MemoryUsage > 90.0 {
-			as.GenerateAlert(metric.NodeID, "Critical", "High Memory usage detected", "MemoryUsage", metric.MemoryUsage, 90.0)
-		}
-		if metric.DiskUsage > 90.0 {
-			as.GenerateAlert(metric.NodeID, "Critical", "High Disk usage detected", "DiskUsage", metric.DiskUsage, 90.0)
-		}
-	}
-}
-
-// NodeMetric represents performance metrics of a node
-type NodeMetric struct {
-	NodeID      string
-	CPUUsage    float64
-	MemoryUsage float64
-	DiskUsage   float64
-	Timestamp   time.Time
-}
-
-func main() {
-	// Example usage of the AlertSystem
-	emailRecipients := []string{"admin@example.com"}
-	smtpServer := "smtp.example.com"
-	smtpPort := 587
-	smtpUser := "user@example.com"
-	smtpPassword := "password"
-
-	alertSystem := NewAlertSystem(emailRecipients, smtpServer, smtpPort, smtpUser, smtpPassword)
-
-	// Example node metrics channel
-	nodeMetricsChan := make(chan NodeMetric)
-
-	// Simulate node metrics data
-	go func() {
-		for {
-			nodeMetricsChan <- NodeMetric{
-				NodeID:      "node1",
-				CPUUsage:    95.0,
-				MemoryUsage: 85.0,
-				DiskUsage:   92.0,
-				Timestamp:   time.Now(),
+	for _, rule := range as.alertRules {
+		if rule.Condition() {
+			for _, action := range rule.Actions {
+				action(alert)
 			}
-			time.Sleep(10 * time.Second)
 		}
-	}()
-
-	// Start monitoring node metrics
-	go alertSystem.MonitorNodeMetrics(nodeMetricsChan)
-
-	// Keep the main function running
-	select {}
+	}
 }
+
+// AddAlertChannel adds a new alert channel
+func (as *AlertSystem) AddAlertChannel(id string, channel chan Alert) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	as.alertChannels[id] = channel
+}
+
+// RemoveAlertChannel removes an alert channel
+func (as *AlertSystem) RemoveAlertChannel(id string) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	delete(as.alertChannels, id)
+}
+
+// ServePrometheusMetrics serves the Prometheus metrics endpoint
+func (as *AlertSystem) ServePrometheusMetrics(addr string) {
+	http.Handle("/metrics", promhttp.Handler())
+	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// SerializeAlerts serializes the alerts to JSON
+func (as *AlertSystem) SerializeAlerts() (string, error) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	data, err := json.Marshal(as.alerts)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
+}
+
+// DeserializeAlerts deserializes the alerts from JSON
+func (as *AlertSystem) DeserializeAlerts(data string) error {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	var alerts map[string]Alert
+	if err := json.Unmarshal([]byte(data), &alerts); err != nil {
+		return err
+	}
+
+	as.alerts = alerts
+	return nil
+}
+
+// Example usage of the alert system
+func exampleUsage() {
+	alertSystem := NewAlertSystem()
+
+	// Register an alert rule
+	alertSystem.RegisterAlertRule(AlertRule{
+		ID:          "high_cpu_usage",
+		Description: "Triggers when CPU usage exceeds 90%",
+		Severity:    "high",
+		Condition: func() bool {
+			// Example condition
+			return false
+		},
+		Actions: []func(alert Alert){
+			func(alert Alert) {
+				fmt.Println("Action 1 for alert:", alert)
+			},
+			func(alert Alert) {
+				fmt.Println("Action 2 for alert:", alert)
+			},
+		},
+	})
+
+	// Generate an alert
+	alertSystem.GenerateAlert("alert_1", "medium", "CPU usage at 85%")
+
+	// Start Prometheus metrics server
+	go alertSystem.ServePrometheusMetrics(":9090")
+
+	// Serialize alerts to JSON
+	jsonData, _ := alertSystem.SerializeAlerts()
+	fmt.Println("Serialized alerts:", jsonData)
+
+	// Deserialize alerts from JSON
+	_ = alertSystem.DeserializeAlerts(jsonData)
+}
+
